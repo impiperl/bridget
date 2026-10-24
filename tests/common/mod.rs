@@ -55,6 +55,8 @@ impl Session {
         cmd.env("BRIDGET_COLOR", "aus");
         cmd.env_remove("BRIDGET_LANG");
         cmd.env_remove("TMUX");
+        // Nie ins echte Gedächtnis (Dumps, duo-Einleitung); Tests mit Gedächtnis setzen es selbst.
+        cmd.env("BRIDGET_MEMORY", dir.join("kein-gedaechtnis"));
         for (k, v) in env {
             cmd.env(k, v);
         }

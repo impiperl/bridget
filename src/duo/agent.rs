@@ -81,6 +81,9 @@ pub struct Agent {
     pub started: bool,
     /// codex: Modell (ohne User-Config sonst unbestimmt).
     pub model: Option<String>,
+    /// Gemeinsames Gedächtnis. claude bekommt es per `--add-dir` frei (sonst sperrt
+    /// `--restricted` alles außerhalb von `cwd`); codex liest headless ohnehin überall.
+    pub memory: Option<PathBuf>,
 }
 
 impl Agent {
@@ -89,7 +92,7 @@ impl Agent {
             Kind::Claude => Some(uuid_v4()),
             Kind::Codex => None,
         };
-        Agent { kind, cwd, session, started: false, model }
+        Agent { kind, cwd, session, started: false, model, memory: None }
     }
 
     /// Argumente für den headless Aufruf (ohne Programmname).
@@ -112,13 +115,14 @@ impl Agent {
                         "--include-partial-messages",
                         "--restricted",
                         "--strict-mcp-config",
-                        "--tools",
-                        "Read",
-                        "Grep",
-                        "Glob",
                     ]
                     .map(s),
                 );
+                // Vor `--tools`: Beide nehmen Listen, `--tools` muss als Letztes stehen.
+                if let Some(m) = &self.memory {
+                    a.extend([s("--add-dir"), m.display().to_string()]);
+                }
+                a.extend(["--tools", "Read", "Grep", "Glob"].map(s));
                 a
             }
             Kind::Codex => {
@@ -596,6 +600,10 @@ mod tests {
         assert!(joined.contains("--strict-mcp-config"));
         assert!(joined.ends_with("--tools Read Grep Glob"));
         assert!(!joined.contains("allowedTools") && !joined.contains("dangerously"));
+        assert!(!joined.contains("--add-dir"));
+        a.memory = Some("/m".into());
+        let with_memory = a.headless_args(Path::new("/x")).join(" ");
+        assert!(with_memory.ends_with("--add-dir /m --tools Read Grep Glob"), "{with_memory}");
         a.started = true;
         assert!(a.headless_args(Path::new("/x")).join(" ").contains(&format!("--resume {id}")));
         assert_eq!(a.interactive_command().unwrap(), vec!["claude", "--resume", &id]);

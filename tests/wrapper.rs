@@ -60,6 +60,54 @@ fn forwards_sigterm_to_program() {
     assert_eq!(s.wait().exit_code(), 128 + libc::SIGTERM as u32);
 }
 
+/// Inhalt aller Dumps in `<mem>/sitzungen/`.
+fn dumps(mem: &std::path::Path) -> String {
+    std::fs::read_dir(mem.join("sitzungen"))
+        .map(|d| {
+            d.flatten().map(|e| std::fs::read_to_string(e.path()).unwrap()).collect::<String>()
+        })
+        .unwrap_or_default()
+}
+
+#[test]
+fn hangup_writes_dump_with_last_output() {
+    let dir = runtime_dir();
+    let mem = dir.join("mem");
+    std::fs::create_dir(&mem).unwrap();
+    let env = [("BRIDGET_MEMORY", mem.display().to_string())];
+    let mut s =
+        Session::start_with_env(&dir, &["T", "--", "sh", "-c", "echo hallo-dump; sleep 30"], &env);
+    s.expect("hallo-dump");
+    let pid = s.child.process_id().unwrap() as libc::pid_t;
+    unsafe { libc::kill(pid, libc::SIGHUP) };
+    assert_eq!(s.wait().exit_code(), 128 + libc::SIGHUP as u32);
+    let text = dumps(&mem);
+    assert!(text.contains("typ: sitzung") && text.contains("Konsole: `T`"), "{text}");
+    assert!(text.contains("Fenster geschlossen (SIGHUP)") && text.contains("hallo-dump"), "{text}");
+}
+
+#[test]
+fn normal_exit_writes_dump_unless_disabled() {
+    let dir = runtime_dir();
+    let mem = dir.join("mem");
+    std::fs::create_dir(&mem).unwrap();
+    let path = mem.display().to_string();
+    let mut s = Session::start_with_env(
+        &dir,
+        &["T", "--", "sh", "-c", "echo fertig; exit 2"],
+        &[("BRIDGET_MEMORY", path.clone())],
+    );
+    assert_eq!(s.wait().exit_code(), 2);
+    assert!(dumps(&mem).contains("Programm beendet (Exit 2)"));
+
+    let quiet = dir.join("mem2");
+    std::fs::create_dir(&quiet).unwrap();
+    let env = [("BRIDGET_MEMORY", quiet.display().to_string()), ("BRIDGET_NO_DUMP", "1".into())];
+    let mut s = Session::start_with_env(&dir, &["U", "--", "true"], &env);
+    s.wait();
+    assert!(dumps(&quiet).is_empty());
+}
+
 #[test]
 fn restores_terminal_after_program_is_killed() {
     // Das Programm wird hart beendet; danach muss das Test-PTY wieder im Normalmodus sein.

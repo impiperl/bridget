@@ -1,6 +1,6 @@
 //! Halbduplex-Zustandsmaschine für `duo`. Reine Logik ohne Prozesse und Terminal.
 //!
-//! Regeln (siehe Wiki, Konzept → Zustandsmaschine):
+//! Regeln:
 //! - Genau eine Seite hat das Rederecht, nie mehr als ein Aufruf gleichzeitig.
 //! - Ein Rundenlimit für das ganze Gespräch (jede Antwort zählt, auch Übergaben).
 //! - Pause lässt einen laufenden Aufruf zu Ende laufen, gibt aber erst nach „weiter“ weiter.

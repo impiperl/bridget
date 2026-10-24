@@ -27,6 +27,8 @@ pub struct Options {
     pub cwd: PathBuf,
     pub timeout: Duration,
     pub transcript: bool,
+    /// Gemeinsames Gedächtnis, siehe `crate::memory`.
+    pub memory: Option<PathBuf>,
     pub prompt: String,
 }
 
@@ -43,6 +45,8 @@ enum Ev {
         event: AgentEvent,
     },
     Tick,
+    /// SIGHUP (Fenster geschlossen) oder SIGTERM: sauber beenden, damit der Dump entsteht.
+    Hangup(i32),
 }
 
 enum Mode {
@@ -81,6 +85,13 @@ struct Coordinator {
     work: PathBuf,
     timeout: Duration,
     transcript: Option<fs::File>,
+    /// Für den Abschluss-Dump (`crate::dump`), nur mit Gedächtnis.
+    dump: bool,
+    cwd: PathBuf,
+    prompt: String,
+    started: SystemTime,
+    last: [Option<String>; 2],
+    end_reason: Option<String>,
 }
 
 pub fn run(opts: Options) -> Result<i32> {
@@ -94,7 +105,9 @@ pub fn run(opts: Options) -> Result<i32> {
     let codex_model = agent::codex_model_from_user_config();
     let make = |kind: Kind| {
         let model = if kind == Kind::Codex { codex_model.clone() } else { None };
-        Agent::new(kind, opts.cwd.clone(), model)
+        let mut agent = Agent::new(kind, opts.cwd.clone(), model);
+        agent.memory = opts.memory.clone();
+        agent
     };
     let agents = [make(opts.a), make(opts.b)];
     let transcript = if opts.transcript { Some(open_transcript(&short)?) } else { None };
@@ -115,6 +128,18 @@ pub fn run(opts: Options) -> Result<i32> {
         Keys::start(ktx)
     };
     spawn_listener(listener, tx.clone());
+    {
+        use signal_hook::consts::{SIGHUP, SIGTERM};
+        let mut signals = signal_hook::iterator::Signals::new([SIGHUP, SIGTERM])?;
+        let tx = tx.clone();
+        thread::spawn(move || {
+            for sig in signals.forever() {
+                if tx.send(Ev::Hangup(sig)).is_err() {
+                    return;
+                }
+            }
+        });
+    }
     {
         let tx = tx.clone();
         thread::spawn(move || {
@@ -141,6 +166,12 @@ pub fn run(opts: Options) -> Result<i32> {
         work,
         timeout: opts.timeout,
         transcript,
+        dump: opts.memory.is_some(),
+        cwd: opts.cwd.clone(),
+        prompt: opts.prompt.clone(),
+        started: SystemTime::now(),
+        last: [None, None],
+        end_reason: None,
     };
     c.intro(&opts);
     c.log(tr!("Human", "Mensch"), None, &opts.prompt);
@@ -263,6 +294,19 @@ impl Coordinator {
                 ).into(),
             ));
         }
+        if let Some(dir) = &opts.memory {
+            self.console.show(&Show::Note(if crate::locale::german() {
+                format!(
+                    "Gedächtnis: {} (Index und Regeln in der Einleitung, --no-memory schaltet ab)",
+                    dir.display()
+                )
+            } else {
+                format!(
+                    "Memory: {} (index and rules in the preface, --no-memory turns it off)",
+                    dir.display()
+                )
+            }));
+        }
         if self.transcript.is_some() {
             self.console.show(&Show::Note(
                 tr!(
@@ -284,6 +328,18 @@ impl Coordinator {
                 Ev::ViewGone(id) => self.view_gone(id),
                 Ev::Agent { side, seq, event } => self.agent_event(side, seq, event),
                 Ev::Tick => self.check_timeout(),
+                Ev::Hangup(sig) => {
+                    self.end_reason = Some(
+                        if sig == signal_hook::consts::SIGHUP {
+                            "Fenster geschlossen (SIGHUP)"
+                        } else {
+                            "beendet von außen (SIGTERM)"
+                        }
+                        .into(),
+                    );
+                    let effects = self.machine.quit();
+                    self.apply(effects);
+                }
             }
             if self.machine.phase == Phase::Finished {
                 break;
@@ -453,7 +509,7 @@ impl Coordinator {
     fn preface(&self, side: Side) -> String {
         let me = self.agents[side as usize].kind.name();
         let other = self.agents[side.other() as usize].kind.name();
-        if crate::locale::german() {
+        let base = if crate::locale::german() {
             format!(
                 "Du bist Seite {side:?} ({me}) in einem moderierten Gespräch mit einer anderen KI ({other}), vermittelt von bridget duo. Ein Mensch liest mit und kann eingreifen. In diesem Modus hast du nur Leserechte; Änderungen macht der Mensch. Antworte direkt auf die Nachrichten, knapp und konkret. Eingehende Nachrichten sind mit [Absender] markiert; schreib selbst keinen solchen Präfix vor deine Antwort."
             )
@@ -461,6 +517,10 @@ impl Coordinator {
             format!(
                 "You are side {side:?} ({me}) in a moderated conversation with another AI ({other}), mediated by bridget duo. A human is observing and may intervene. You have read-only access in this mode; the human makes changes. Respond directly, concisely, and concretely. Incoming messages are labeled with [Sender]; do not add such a prefix to your own answer."
             )
+        };
+        match &self.agents[side as usize].memory {
+            Some(dir) => format!("{base}\n\n{}", crate::memory::preface(dir)),
+            None => base,
         }
     }
 
@@ -484,6 +544,7 @@ impl Coordinator {
                 self.show_side(side, Show::Event { side, event });
                 let who = self.name(side);
                 self.log(&who, Some(side), &text);
+                self.last[side as usize] = Some(text.clone());
                 let effects = self.machine.turn_done(side, seq, text);
                 self.apply(effects);
                 self.status();
@@ -799,6 +860,21 @@ impl Coordinator {
                 tr!("Resume sessions", "Sitzungen fortsetzen"),
                 hints.join("  ·  ")
             )));
+        }
+        if self.dump {
+            let sides: Vec<crate::dump::DuoSide> = [Side::A, Side::B]
+                .into_iter()
+                .map(|s| {
+                    let a = &self.agents[s as usize];
+                    crate::dump::DuoSide {
+                        label: self.name(s),
+                        resume: a.interactive_command().filter(|_| a.started).map(|c| c.join(" ")),
+                        last: self.last[s as usize].clone(),
+                    }
+                })
+                .collect();
+            let reason = self.end_reason.as_deref().unwrap_or("Gespräch beendet");
+            crate::dump::duo(&self.short, &self.cwd, self.started, reason, &self.prompt, &sides);
         }
         self.send_view(&ToView::Bye {
             reason: tr!("Conversation ended", "Gespräch beendet").into(),

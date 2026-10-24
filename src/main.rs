@@ -5,9 +5,12 @@ mod bridge;
 mod color;
 mod ctl;
 mod desk;
+mod dump;
 mod duo;
 mod help;
+mod hook;
 mod hotkey;
+mod memory;
 mod name;
 mod pair;
 mod picker;
@@ -92,6 +95,13 @@ enum Cmd {
     /// Internal command run by tmux when a pane of `desk` exits
     #[command(hide = true, name = "desk-fix")]
     DeskFix { server: String, session: String },
+    /// Internal command run by claude/codex hooks (/compact, /clear → dump)
+    #[command(hide = true)]
+    Hook {
+        cli: String,
+        #[arg(long, hide = true)]
+        after_compact: Option<usize>,
+    },
     /// Show configuration and the effective profile for PROG
     Config {
         program: Option<String>,
@@ -126,6 +136,9 @@ enum Cmd {
         /// Log the conversation in ~/.local/state/bridget/ (0600, 14 days)
         #[arg(long)]
         transcript: bool,
+        /// Do not pass the shared memory (~/.local/share/bridget/memory) to either side
+        #[arg(long)]
+        no_memory: bool,
         /// Initial prompt for side A
         prompt: Vec<String>,
     },
@@ -232,13 +245,24 @@ fn run(cli: Cli) -> anyhow::Result<i32> {
             return desk::run(desk::Options { left, right, tabs, here });
         }
         Some(Cmd::DeskFix { server, session }) => return Ok(desk::fix(&server, &session)),
+        Some(Cmd::Hook { cli, after_compact }) => return Ok(hook::run(&cli, after_compact)),
         Some(Cmd::Config { program, init }) => {
             return profile::show_config(program.as_deref(), init).map(|()| 0);
         }
         Some(Cmd::Link { a, b }) => return ctl::link(&a, &b).map(|()| 0),
         Some(Cmd::Unlink { name }) => return ctl::unlink(&name).map(|()| 0),
         Some(Cmd::Duo { join: Some(DuoCmd::Join { id }), .. }) => return duo::join(&id),
-        Some(Cmd::Duo { join: None, a, b, rounds, cwd, timeout, transcript, prompt }) => {
+        Some(Cmd::Duo {
+            join: None,
+            a,
+            b,
+            rounds,
+            cwd,
+            timeout,
+            transcript,
+            no_memory,
+            prompt,
+        }) => {
             anyhow::ensure!(
                 !prompt.is_empty(),
                 "{}",
@@ -263,6 +287,7 @@ fn run(cli: Cli) -> anyhow::Result<i32> {
                 cwd,
                 timeout: std::time::Duration::from_secs(timeout),
                 transcript,
+                memory: if no_memory { None } else { memory::dir() },
                 prompt: prompt.join(" "),
             });
         }

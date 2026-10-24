@@ -3,8 +3,6 @@
 Aufsatz für Konsolenprogramme. Text per Hotkey zwischen zwei Konsolen schicken, und zwei
 KI-CLIs (`claude`, `codex`) kontrolliert miteinander reden lassen.
 
-Plan, Entscheidungen und Erkenntnisse: Wiki → Tools → bridget.
-
 Nur Linux: bridget braucht Unix-PTYs und `SO_PEERCRED` für die Socket-Prüfung.
 
 ## Bauen
@@ -14,6 +12,27 @@ cargo build --release
 cp target/release/bridget ~/.local/bin/
 cargo test            # Unit- und Integrationstests (laufen in Test-PTYs)
 ```
+
+Oder alles auf einmal: `./install.sh` (`--help` für Optionen). Das baut, installiert nach
+`~/.local/bin` und legt ein **gemeinsames Gedächtnis** für claude und codex an
+(`~/.local/share/bridget/memory`, anders mit `--memory` oder `BRIDGET_MEMORY`). Neue
+Sitzungen lesen dort `INDEX.md`, die Regeln in `regeln/` und offene Übergaben; wie Einträge
+aussehen, steht in `GLOSSAR.md`. Der Installer trägt einen Verweis in `~/.claude/CLAUDE.md`
+und `~/.codex/AGENTS.md` ein und gibt den Ordner in `~/.claude/settings.json` frei
+(Sicherung jeweils als `*.bak-bridget`). `--no-agents` lässt beides weg. Vorhandene
+Gedächtnis-Dateien werden nie überschrieben.
+
+Beim Beenden einer Konsole oder eines `duo`-Gesprächs, auch wenn das Fenster geschlossen wird,
+schreibt bridget einen Dump nach `sitzungen/`: Programm, Ordner, wie es endete, den Befehl
+zum Fortsetzen (`claude --resume …`, `codex resume …`) und die letzte Ausgabe (höchstens
+16 KiB). Dateien `0600`, nach 14 Tagen gelöscht. `BRIDGET_NO_DUMP=1` schaltet das ab, bei
+`duo` auch `--no-memory`.
+
+Dasselbe bei `/compact` (auch automatischem Kompaktieren) und `/clear` in claude und codex
+(dort auch `/new`), über Hooks, die `install.sh` einträgt (`~/.claude/settings.json`,
+`~/.codex/hooks.json`). Sie rufen `bridget hook claude|codex` auf und gelten für alle
+Sitzungen, nicht nur in bridget-Konsolen. codex fragt beim ersten Start danach
+„Hooks need review“: freigeben, sonst laufen sie nicht.
 
 ## Sprache
 

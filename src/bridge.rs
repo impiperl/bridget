@@ -548,7 +548,13 @@ impl Bridge {
         }
     }
 
-    fn partner_name(&self) -> Option<String> {
+    /// Für den Abschluss-Dump: letzte Ausgabe, sonst der sichtbare Bildschirm.
+    pub fn dump_text(&self) -> String {
+        let (last, _) = self.extract(What::Last);
+        if last.trim().is_empty() { self.extract(What::Screen).0 } else { last }
+    }
+
+    pub fn partner_name(&self) -> Option<String> {
         self.partner.lock().unwrap().as_ref().map(|p| p.name.clone())
     }
 
