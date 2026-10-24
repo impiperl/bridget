@@ -1,0 +1,2 @@
+# Kommt dem handformatierten Stil am nächsten (kurze Ausdrücke bleiben einzeilig).
+use_small_heuristics = "Max"

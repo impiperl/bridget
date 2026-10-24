@@ -1,0 +1,15 @@
+#!/bin/sh
+# Nachgebautes `claude -p --output-format stream-json` für die duo-Tests.
+echo "claude $*" >> "$FAKE_LOG"
+prompt=$(cat)
+sid=""
+prev=""
+for a in "$@"; do
+  if [ "$prev" = "--session-id" ] || [ "$prev" = "--resume" ]; then sid="$a"; fi
+  prev="$a"
+done
+sleep "${FAKE_SLEEP:-0}"
+last=$(printf '%s\n' "$prompt" | grep -v '^\[' | grep -v '^$' | tail -n 1 | tr -d '"\\')
+echo "{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"$sid\"}"
+echo "{\"type\":\"stream_event\",\"event\":{\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"claude-antwort zu: $last\"}}}"
+echo "{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"claude-antwort zu: $last\",\"permission_denials\":[]}"

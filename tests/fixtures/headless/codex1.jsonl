@@ -1,0 +1,7 @@
+{"type": "thread.started", "thread_id": "01a16684-f9b1-7450-a66e-3d8c99df352f"}
+{"type": "turn.started"}
+{"type": "item.completed", "item": {"id": "item_0", "type": "agent_message", "text": "Ich lese die Datei kurz aus."}}
+{"type": "item.started", "item": {"id": "item_1", "type": "command_execution", "command": "/bin/bash -lc \"sed -n '1,160p' notiz.txt\"", "aggregated_output": "", "exit_code": null, "status": "in_progress"}}
+{"type": "item.completed", "item": {"id": "item_1", "type": "command_execution", "command": "/bin/bash -lc \"sed -n '1,160p' notiz.txt\"", "aggregated_output": "Projekt Sonnenblume\nZiel: drei Testpunkte.\n", "exit_code": 0, "status": "completed"}}
+{"type": "item.completed", "item": {"id": "item_2", "type": "agent_message", "text": "Das Projekt heißt „Sonnenblume“."}}
+{"type": "turn.completed", "usage": {"input_tokens": 28797, "cached_input_tokens": 25216, "cache_write_input_tokens": 0, "output_tokens": 128, "reasoning_output_tokens": 0}}

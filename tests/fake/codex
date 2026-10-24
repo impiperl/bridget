@@ -1,0 +1,16 @@
+#!/bin/sh
+# Nachgebautes `codex exec --json -o FILE` für die duo-Tests.
+echo "codex $*" >> "$FAKE_LOG"
+prompt=$(cat)
+out=""
+prev=""
+for a in "$@"; do
+  if [ "$prev" = "-o" ]; then out="$a"; fi
+  prev="$a"
+done
+sleep "${FAKE_SLEEP:-0}"
+last=$(printf '%s\n' "$prompt" | grep -v '^\[' | grep -v '^$' | tail -n 1 | tr -d '"\\')
+echo '{"type":"thread.started","thread_id":"fake-thread-1"}'
+echo "{\"type\":\"item.completed\",\"item\":{\"id\":\"i0\",\"type\":\"agent_message\",\"text\":\"codex-antwort zu: $last\"}}"
+printf 'codex-antwort zu: %s' "$last" > "$out"
+echo '{"type":"turn.completed","usage":{}}'
