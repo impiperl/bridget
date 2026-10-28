@@ -73,7 +73,21 @@ fn desk_tabs_marking_and_cleanup() {
     assert_eq!(t.run(&["list-panes", "-t", &t.env("BRIDGET_DESK_MAIN")]).lines().count(), 3);
     assert_eq!(t.bottom(), p3, "Tab 3 ist zuerst unten");
     let status = t.run(&["show-options", "-t", "bridget-desk", "status-right"]);
-    assert!(status.contains("Ctrl-Space [n] Enter"), "{status}");
+    assert!(status.contains("Alt+1 LEFT"), "{status}");
+    assert!(status.contains("Alt+3 · VISIBLE"), "{status}");
+    assert!(status.contains("F1 HELP"), "{status}");
+    let border =
+        t.run(&["show-options", "-w", "-t", &t.env("BRIDGET_DESK_MAIN"), "pane-border-format"]);
+    assert!(border.contains("ACTIVE"), "{border}");
+    assert!(border.contains("TOP LEFT"), "{border}");
+    let root_keys = t.run(&["list-keys", "-T", "root"]);
+    assert!(root_keys.contains("M-1") && root_keys.contains("C-Space 1 Tab"), "{root_keys}");
+
+    // Alt+4 aus dem echten Client: direkt zu Terminal 4, ohne Prefix-Folge.
+    s.send(b"\x1b4");
+    wait_until("Alt+4 schaltet direkt zu Tab 4", || t.bottom() == p4);
+    s.send(b"\x1b3");
+    wait_until("Alt+3 schaltet direkt zu Tab 3", || t.bottom() == p3);
 
     // Ctrl-] 4 Tab in Konsole 1: Tab 4 kommt nach unten.
     t.keys(&p1, &["C-]", "4", "Tab"]);

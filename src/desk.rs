@@ -11,7 +11,8 @@
 //! den nächsten Tab nach unten.
 //!
 //! Aus einer Konsole heraus (`Ctrl-Space 4 Tab`, `Ctrl-Space N`) läuft tmux über `$TMUX`,
-//! also immer auf dem Server, in dem die Konsole steckt.
+//! also immer auf dem Server, in dem die Konsole steckt. Im Desk schalten zusätzlich
+//! `Alt+1` … `Alt+9` direkt um; `F1` öffnet die Hilfe.
 
 use std::collections::BTreeMap;
 use std::process::{Command, Stdio};
@@ -24,6 +25,8 @@ use crate::runtime;
 const MAIN: &str = "BRIDGET_DESK_MAIN";
 const TOP: &str = "BRIDGET_DESK_TOP";
 const TAB: &str = "BRIDGET_DESK_TAB_";
+/// Sitzungsoption für tmux-Bindings: Nur im Desk Sondertasten abfangen.
+const DESK_OPTION: &str = "@bridget_desk";
 /// Höhe des Terminal-Bereichs in Prozent.
 const AREA_PERCENT: &str = "35";
 /// Erste Nummer im Terminal-Bereich.
@@ -80,6 +83,8 @@ pub fn run(opts: Options) -> Result<i32> {
     let setup = (|| -> Result<String> {
         pair::base_options()?;
         let t = Tmux::Server(pair::server());
+        t.run(&["set-option", "-t", &session, DESK_OPTION, "1"])?;
+        bind_direct_keys(&t)?;
         t.run(&[
             "set-option",
             "-t",
@@ -115,6 +120,8 @@ pub fn run(opts: Options) -> Result<i32> {
             &cmd(2, Some(&name(1)), &right),
         ])?;
         let main = t.run(&["display-message", "-p", "-t", &p1, "#{window_id}"])?;
+        t.run(&["set-option", "-w", "-t", &main, "pane-border-format", desk_border_format()])?;
+        t.run(&["set-option", "-t", &session, "status-right-length", "240"])?;
         t.set_env(&session, MAIN, &main)?;
         t.set_env(&session, TOP, &format!("{p1} {p2}"))?;
         for (n, pane) in [(1, &p1), (2, &p2), (FIRST_TAB, &p3)] {
@@ -433,6 +440,47 @@ fn bottom(t: &Tmux, session: &str) -> Result<Option<String>> {
         .map(str::to_string))
 }
 
+/// Direkte, leicht merkbare Desk-Tasten. Die Bindings liegen zwar auf dem eigenen
+/// bridget-tmux-Server, prüfen aber die Sitzungsmarkierung: In `pair` und fremden
+/// Sitzungen gehen dieselben Tasten unverändert an das Programm.
+fn bind_direct_keys(t: &Tmux) -> Result<()> {
+    for n in 1..=9 {
+        let key = format!("M-{n}");
+        let in_desk = format!("send-keys C-Space {n} Tab");
+        let otherwise = format!("send-keys M-{n}");
+        t.run(&[
+            "bind-key",
+            "-n",
+            &key,
+            "if-shell",
+            "-F",
+            &format!("#{{{DESK_OPTION}}}"),
+            &in_desk,
+            &otherwise,
+        ])?;
+    }
+    t.run(&[
+        "bind-key",
+        "-n",
+        "F1",
+        "if-shell",
+        "-F",
+        &format!("#{{{DESK_OPTION}}}"),
+        "send-keys C-Space H",
+        "send-keys F1",
+    ])?;
+    Ok(())
+}
+
+/// Der Fokus ist zusätzlich zur Farbe ausgeschrieben; die Ortsangabe macht die drei
+/// sichtbaren Bereiche ohne räumliches Rätsel eindeutig.
+fn desk_border_format() -> &'static str {
+    tr!(
+        "#{?pane_active,#[fg=black,bg=yellow,bold] ● ACTIVE #[default],#[fg=colour244] ○ inactive #[default]} #{?#{==:#{pane_top},0},#{?#{==:#{pane_left},0},TOP LEFT,TOP RIGHT},BOTTOM TERMINAL} · #{pane_title} ",
+        "#{?pane_active,#[fg=black,bg=yellow,bold] ● AKTIV #[default],#[fg=colour244] ○ inaktiv #[default]} #{?#{==:#{pane_top},0},#{?#{==:#{pane_left},0},OBEN LINKS,OBEN RECHTS},TERMINAL UNTEN} · #{pane_title} "
+    )
+}
+
 fn current_tab(t: &Tmux, session: &str) -> Result<Option<u32>> {
     let Some(pane) = bottom(t, session)? else { return Ok(None) };
     Ok(tabs(t, session)?.into_iter().find(|(_, p)| *p == pane).map(|(n, _)| n))
@@ -486,24 +534,38 @@ fn show_in(t: &Tmux, session: &str, n: u32, focus: bool) -> Result<()> {
     refresh_status(t, session)
 }
 
-/// Statuszeile: Tabs des Terminal-Bereichs (der sichtbare hervorgehoben) und die Tasten.
+fn switch_key(n: u32) -> String {
+    if n <= 9 { format!("Alt+{n}") } else { format!("Ctrl-Space {n} Tab") }
+}
+
+/// Statuszeile: beschriftete Ziele statt nackter Nummern. Der sichtbare untere Tab ist
+/// nicht nur farblich, sondern auch mit Text markiert.
 fn refresh_status(t: &Tmux, session: &str) -> Result<()> {
     let current = current_tab(t, session)?;
     let list: String = area_tabs(t, session)?
         .keys()
         .map(|&n| {
             if Some(n) == current {
-                format!("#[fg=black,bg=yellow,bold] {n} #[default]")
+                format!(
+                    "#[fg=black,bg=yellow,bold] [{} · {}] #[default]",
+                    switch_key(n),
+                    tr!("VISIBLE", "SICHTBAR")
+                )
             } else {
-                format!(" {n} ")
+                format!(" [{}]", switch_key(n))
             }
         })
         .collect();
-    let keys = tr!(
-        " #[fg=black,bg=green,bold] Ctrl-Space [n] Enter  SEND #[default]  [n Tab] [N New] [M Marked] [A Select] [H Help] ",
-        " #[fg=black,bg=green,bold] Ctrl-Space [n] Enter  SENDEN #[default]  [n Tab] [N Neu] [M Markierung] [A Auswahl] [H Hilfe] "
+    let keys = format!(
+        "{}{}{}",
+        tr!(
+            " #[fg=black,bg=cyan,bold] SWITCH: [Alt+1 LEFT] [Alt+2 RIGHT] #[default] BOTTOM:",
+            " #[fg=black,bg=cyan,bold] WECHSELN: [Alt+1 LINKS] [Alt+2 RECHTS] #[default] UNTEN:"
+        ),
+        list,
+        tr!("  [F1 HELP] ", "  [F1 HILFE] ")
     );
-    t.run(&["set-option", "-t", session, "status-right", &format!("{list}{keys}")]).map(drop)
+    t.run(&["set-option", "-t", session, "status-right", &keys]).map(drop)
 }
 
 #[cfg(test)]
@@ -520,5 +582,19 @@ mod tests {
         assert_eq!(group("A2"), "");
         assert_eq!(group("my-console"), "");
         assert_eq!(group("x-"), "");
+    }
+
+    #[test]
+    fn direct_key_hint_has_a_fallback_for_two_digit_tabs() {
+        assert_eq!(switch_key(4), "Alt+4");
+        assert_eq!(switch_key(10), "Ctrl-Space 10 Tab");
+    }
+
+    #[test]
+    fn pane_border_names_position_and_focus_in_text() {
+        let format = desk_border_format();
+        assert!(format.contains(tr!("ACTIVE", "AKTIV")));
+        assert!(format.contains(tr!("TOP LEFT", "OBEN LINKS")));
+        assert!(format.contains(tr!("BOTTOM TERMINAL", "TERMINAL UNTEN")));
     }
 }

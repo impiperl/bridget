@@ -40,12 +40,15 @@ pub fn render(name: &str, partner: Option<&str>, rows: u16, cols: u16) -> String
         tr!("[T]      Disconnect", "[T]      Verbindung trennen").into(),
         String::new(),
         tr!("DESK", "DESK").into(),
+        tr!("[Alt+1…9] Switch directly to a console", "[Alt+1…9] Direkt zu einer Konsole wechseln")
+            .into(),
         tr!(
             "[n] Tab  Show terminal n (without n: next)",
             "[n] Tab  Terminal n zeigen (ohne n: nächstes)"
         )
         .into(),
         tr!("[N]      New terminal tab", "[N]      Neuer Terminal-Tab").into(),
+        tr!("[F1]     Open help directly (desk)", "[F1]     Hilfe direkt öffnen (desk)").into(),
         String::new(),
         tr!("MORE", "WEITERES").into(),
         tr!(

@@ -75,6 +75,11 @@ nummeriert (3, 4, …) und stehen in der Leiste unten, der sichtbare ist hervorg
 Tab ist eine eigene bridget-Konsole; die versteckten laufen weiter. Endet ein Tab, rückt der
 nächste nach. Ist `1` schon belegt (zweiter `desk`), heißen die Konsolen `2-1`, `2-2` …
 
+**Konsole wechseln:** In einen sichtbaren Bereich klicken oder direkt `Alt+1`, `Alt+2`,
+`Alt+3` … drücken. `F1` öffnet die Hilfe. Die Pane-Ränder zeigen Position, Konsolentitel
+und `AKTIV`/`inaktiv`; die untere Leiste beschriftet alle Wechselziele. Für Terminal 10 und
+höher sowie als universeller Fallback gilt weiter `Ctrl-Space`, Nummer, `Tab`.
+
 | Taste nach `Ctrl-Space` | Wirkung |
 |---|---|
 | `3 Enter` | letzte Ausgabe an Konsole 3 (einmalig, die Verbindung 1⇄2 bleibt) |
