@@ -2,6 +2,7 @@
 mod locale;
 
 mod bridge;
+mod chrome;
 mod color;
 mod ctl;
 mod desk;

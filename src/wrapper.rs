@@ -151,11 +151,15 @@ pub fn run(opts: Options) -> Result<i32> {
                     Ok(0) | Err(_) => break,
                     Ok(n) => n,
                 };
-                if bridge.overlay_active() {
-                    bridge.overlay_input(&buf[..n]);
-                    continue;
-                }
                 let mut input = &buf[..n];
+                if bridge.overlay_active() {
+                    let consumed = bridge.overlay_input(input);
+                    input = &input[consumed..];
+                    if input.is_empty() {
+                        continue;
+                    }
+                }
+                bridge.hide_action_menu();
                 // Nach "Verbinden" mit mehreren Konsolen gehört die nächste Taste der Auswahl.
                 if bridge.take_choice(input[0]) {
                     input = &input[1..];
@@ -173,6 +177,7 @@ pub fn run(opts: Options) -> Result<i32> {
                         Event::CommandTo(n, key) => bridge.command(key, Some(n)),
                     }
                 }
+                bridge.action_menu(filter.pending_action());
             }
         });
     }

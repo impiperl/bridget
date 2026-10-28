@@ -112,6 +112,14 @@ bekommt ein Kennzeichen: `[A]` bzw. verbunden `[A⇄B]`.
 
 Shortcuts sind zweistufig: zuerst `Ctrl-Space` drücken und loslassen, danach die
 Aktionstaste. Dadurch geraten sie nicht mit den Programmen in den beiden Panes aneinander.
+Nach dem Präfix erscheint ein Aktionsmenü mit dem aktuellen Sendeziel. Eine Nummer
+ändert das Ziel, `Esc` schließt das Menü. Die bisherigen schnellen Tastenfolgen bleiben
+unverändert; Hilfe und Auswahl ersetzen das Menü bei Bedarf.
+
+Pair und Desk verwenden dezente Rahmen und eine türkise Hervorhebung der aktiven
+Konsole. Kurze Rückmeldungen erscheinen zusätzlich in der unteren Statusleiste.
+Beim Senden läuft dort einmal ein Punkt über die Brücke; `BRIDGET_ANIMATION=0`
+schaltet diese Animation ab. Sie verändert die Ausgabe der gestarteten Programme nicht.
 
 | Taste nach `Ctrl-Space` | Wirkung |
 |---|---|

@@ -41,6 +41,12 @@ pub struct Filter {
 }
 
 impl Filter {
+    /// `Some(None)` means the prefix is waiting for an action; the inner number is
+    /// the optional destination. Paste input never opens the action menu.
+    pub fn pending_action(&self) -> Option<Option<u32>> {
+        self.after_prefix.map(|_| self.target.map(|(n, _)| n))
+    }
+
     pub fn new() -> Self {
         Self::default()
     }

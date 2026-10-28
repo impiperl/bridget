@@ -90,7 +90,7 @@ pub fn run(opts: Options) -> Result<i32> {
             "-t",
             &session,
             "status-left",
-            "#[fg=black,bg=cyan,bold] bridget desk #[default] ",
+            "#[fg=colour81,bold] bridget desk #[default] #{@bridget_feedback}",
         ])?;
         let p3 = t.run(&[
             "split-window",
@@ -476,8 +476,8 @@ fn bind_direct_keys(t: &Tmux) -> Result<()> {
 /// sichtbaren Bereiche ohne räumliches Rätsel eindeutig.
 fn desk_border_format() -> &'static str {
     tr!(
-        "#{?pane_active,#[fg=black,bg=yellow,bold] ● ACTIVE #[default],#[fg=colour244] ○ inactive #[default]} #{?#{==:#{pane_top},0},#{?#{==:#{pane_left},0},TOP LEFT,TOP RIGHT},BOTTOM TERMINAL} · #{pane_title} ",
-        "#{?pane_active,#[fg=black,bg=yellow,bold] ● AKTIV #[default],#[fg=colour244] ○ inaktiv #[default]} #{?#{==:#{pane_top},0},#{?#{==:#{pane_left},0},OBEN LINKS,OBEN RECHTS},TERMINAL UNTEN} · #{pane_title} "
+        "#{?pane_active,#[fg=colour81,bold] ● ACTIVE #[default],#[fg=colour245] ○ inactive #[default]} #{?#{==:#{pane_top},0},#{?#{==:#{pane_left},0},TOP LEFT,TOP RIGHT},BOTTOM TERMINAL} · #{pane_title} ",
+        "#{?pane_active,#[fg=colour81,bold] ● AKTIV #[default],#[fg=colour245] ○ inaktiv #[default]} #{?#{==:#{pane_top},0},#{?#{==:#{pane_left},0},OBEN LINKS,OBEN RECHTS},TERMINAL UNTEN} · #{pane_title} "
     )
 }
 
@@ -541,13 +541,22 @@ fn switch_key(n: u32) -> String {
 /// Statuszeile: beschriftete Ziele statt nackter Nummern. Der sichtbare untere Tab ist
 /// nicht nur farblich, sondern auch mit Text markiert.
 fn refresh_status(t: &Tmux, session: &str) -> Result<()> {
+    let panes = tabs(t, session)?;
+    let panes: Vec<&str> = panes.values().map(String::as_str).collect();
+    t.run(&[
+        "set-option",
+        "-t",
+        session,
+        "status-left",
+        &crate::chrome::status_left("desk", &panes),
+    ])?;
     let current = current_tab(t, session)?;
     let list: String = area_tabs(t, session)?
         .keys()
         .map(|&n| {
             if Some(n) == current {
                 format!(
-                    "#[fg=black,bg=yellow,bold] [{} · {}] #[default]",
+                    "#[fg=colour235,bg=colour81,bold] [{} · {}] #[default]",
                     switch_key(n),
                     tr!("VISIBLE", "SICHTBAR")
                 )
@@ -559,11 +568,11 @@ fn refresh_status(t: &Tmux, session: &str) -> Result<()> {
     let keys = format!(
         "{}{}{}",
         tr!(
-            " #[fg=black,bg=cyan,bold] SWITCH: [Alt+1 LEFT] [Alt+2 RIGHT] #[default] BOTTOM:",
-            " #[fg=black,bg=cyan,bold] WECHSELN: [Alt+1 LINKS] [Alt+2 RECHTS] #[default] UNTEN:"
+            " #[fg=colour81] [Alt+1 LEFT] [Alt+2 RIGHT] #[default]",
+            " #[fg=colour81] [Alt+1 LINKS] [Alt+2 RECHTS] #[default]"
         ),
         list,
-        tr!("  [F1 HELP] ", "  [F1 HILFE] ")
+        tr!("  [Ctrl-Space Actions] [F1 HELP] ", "  [Ctrl-Space Aktionen] [F1 HILFE] ")
     );
     t.run(&["set-option", "-t", session, "status-right", &keys]).map(drop)
 }

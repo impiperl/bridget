@@ -113,16 +113,16 @@ pub fn run(opts: Options) -> Result<i32> {
     let setup = (|| -> Result<String> {
         base_options()?;
         for opt in [
-            ["status-left", "#[fg=black,bg=cyan,bold] bridget pair #[default]"],
+            ["status-left", "#[fg=colour81,bold] bridget pair #[default] #{@bridget_feedback}"],
             [
                 "status-right",
                 tr!(
-                    "#[fg=black,bg=green,bold] Ctrl-Space Enter  SEND #[default]  [A Select] [B Screen] [M Marked] [V Connect] [T Disconnect] [H Help] ",
-                    "#[fg=black,bg=green,bold] Ctrl-Space Enter  SENDEN #[default]  [A Auswahl] [B Bildschirm] [M Markierung] [V Verbinden] [T Trennen] [H Hilfe] "
+                    " #[fg=colour81]Ctrl-Space#[default] Actions  ·  #[fg=colour81]Ctrl-Space Enter#[default] Send  ·  #[fg=colour81]Ctrl-Space H#[default] Help ",
+                    " #[fg=colour81]Ctrl-Space#[default] Aktionen  ·  #[fg=colour81]Ctrl-Space Enter#[default] Senden  ·  #[fg=colour81]Ctrl-Space H#[default] Hilfe "
                 ),
             ],
         ] {
-            tmux(&["set-option", "-g", opt[0], opt[1]])?;
+            tmux(&["set-option", "-t", &session, opt[0], opt[1]])?;
         }
         let pane_b = tmux(&[
             "split-window",
@@ -137,6 +137,13 @@ pub fn run(opts: Options) -> Result<i32> {
             &pane_cmd(&b, Some(&a), &right),
         ])?;
         tmux(&["select-pane", "-t", &pane_a])?;
+        tmux(&[
+            "set-option",
+            "-t",
+            &session,
+            "status-left",
+            &crate::chrome::status_left("pair", &[&pane_a, &pane_b]),
+        ])?;
         Ok(pane_b)
     })();
     let pane_b = match setup {
@@ -201,10 +208,15 @@ pub(crate) fn pane_command(
 pub(crate) fn base_options() -> Result<()> {
     for opt in [
         ["pane-border-status", "top"],
-        ["pane-border-format", " #{pane_title} "],
+        ["pane-border-format", border_format()],
+        ["pane-border-style", "fg=colour240"],
+        ["pane-active-border-style", "fg=colour81"],
+        ["status-style", "bg=colour235,fg=colour252"],
+        ["message-style", "bg=colour236,fg=colour81"],
+        ["status-interval", "1"],
         ["status", "on"],
         ["status-position", "bottom"],
-        ["status-left-length", "18"],
+        ["status-left-length", "64"],
         ["status-right-length", "180"],
         ["window-status-format", ""],
         ["window-status-current-format", ""],
@@ -216,6 +228,13 @@ pub(crate) fn base_options() -> Result<()> {
     }
     tmux(&["set-option", "-ga", "terminal-overrides", ",*:Tc"])?;
     Ok(())
+}
+
+pub(crate) fn border_format() -> &'static str {
+    tr!(
+        " #{?pane_active,#[fg=colour81,bold]● ACTIVE,#[fg=colour245]○ inactive} #[default]#{pane_title} ",
+        " #{?pane_active,#[fg=colour81,bold]● AKTIV,#[fg=colour245]○ inaktiv} #[default]#{pane_title} "
+    )
 }
 
 pub(crate) enum Launched {

@@ -239,6 +239,34 @@ fn picker_needs_partner() {
 }
 
 #[test]
+fn action_menu_keeps_target_and_restores_shell_after_escape() {
+    let dir = runtime_dir();
+    let mut a = shell(&dir, "A");
+    a.send(b"\0");
+    a.expect("bridget Actions");
+    a.expect("not connected");
+    a.send(b"3");
+    a.expect("A → 3");
+    a.send(b"\x1b");
+    a.expect("\x1b[?1049l");
+    type_command(&mut a, "echo menu-closed");
+    a.expect("menu-closed\r\n");
+}
+
+#[test]
+fn action_menu_can_open_help_and_restore_program_output() {
+    let dir = runtime_dir();
+    let mut a = shell(&dir, "A");
+    a.send(b"\0");
+    a.expect("bridget Actions");
+    a.send(b"h");
+    a.expect("bridget Help");
+    a.send(b"q");
+    type_command(&mut a, "echo help-closed");
+    a.expect("help-closed\r\n");
+}
+
+#[test]
 fn help_is_a_fullscreen_overlay_and_returns_to_program() {
     let dir = runtime_dir();
     let mut a = shell(&dir, "A");

@@ -57,6 +57,7 @@ pub struct Bridge {
     next_id: AtomicU64,
     titles: Mutex<title_filter::Filter>,
     title_state: Mutex<TitleState>,
+    feedback: Mutex<crate::chrome::Feedback>,
 }
 
 #[derive(Default)]
@@ -76,6 +77,7 @@ struct OpenPicker {
 }
 
 enum Overlay {
+    Menu { child_alt: bool },
     Picker(OpenPicker),
     Help { child_alt: bool },
 }
@@ -113,6 +115,7 @@ impl Bridge {
             next_id: AtomicU64::new(1),
             titles: Mutex::new(title_filter::Filter::new()),
             title_state: Mutex::new(TitleState::default()),
+            feedback: Mutex::new(crate::chrome::Feedback::default()),
         })
     }
 
@@ -135,6 +138,7 @@ impl Bridge {
                 if expired {
                     clock.refresh_title();
                 }
+                clock.feedback.lock().unwrap().tick();
             }
         });
         let me = Arc::clone(self);
@@ -237,7 +241,9 @@ impl Bridge {
 
     /// Taste nach dem Präfix; `target` ist die Nummer davor (`Ctrl-Space 3 Enter`).
     pub fn command(self: &Arc<Self>, key: u8, target: Option<u32>) {
+        self.hide_action_menu();
         match key.to_ascii_lowercase() {
+            0x1b => {}
             b'v' | b'c' => match target {
                 Some(n) => self.connect_and_report(&self.target_name(n)),
                 None => self.choose_partner(),
@@ -261,9 +267,10 @@ impl Bridge {
     }
 
     pub fn shutdown(&self) {
+        self.feedback.lock().unwrap().clear();
         let child_alt = self.overlay.lock().unwrap().take().map(|overlay| match overlay {
             Overlay::Picker(open) => open.child_alt,
-            Overlay::Help { child_alt } => child_alt,
+            Overlay::Help { child_alt } | Overlay::Menu { child_alt } => child_alt,
         });
         if let Some(child_alt) = child_alt {
             self.close_overlay(child_alt);
@@ -606,12 +613,21 @@ impl Bridge {
 
     /// An Konsole `target` (Nummer in der eigenen Gruppe) oder an den Partner.
     fn deliver(&self, text: String, target: Option<u32>) -> Result<String> {
-        let Some(n) = target else { return self.send_text(text) };
-        let name = self.target_name(n);
-        if self.partner_name().as_deref() == Some(name.as_str()) {
-            return self.send_text(text);
+        let result = match target {
+            None => self.send_text(text),
+            Some(n) => {
+                let name = self.target_name(n);
+                if self.partner_name().as_deref() == Some(name.as_str()) {
+                    self.send_text(text)
+                } else {
+                    self.send_once(&name, text)
+                }
+            }
+        };
+        if result.is_ok() {
+            self.feedback.lock().unwrap().transfer();
         }
-        self.send_once(&name, text)
+        result
     }
 
     /// Name der Konsole mit Nummer `n` in derselben Gruppe (`3` bzw. `2-3`).
@@ -698,7 +714,36 @@ impl Bridge {
     // ── Auswahlmodus ────────────────────────────────────────────────────────────
 
     pub fn overlay_active(&self) -> bool {
-        self.overlay.lock().unwrap().is_some()
+        matches!(*self.overlay.lock().unwrap(), Some(Overlay::Picker(_) | Overlay::Help { .. }))
+    }
+
+    pub fn hide_action_menu(&self) {
+        let mut overlay = self.overlay.lock().unwrap();
+        if let Some(Overlay::Menu { child_alt }) = *overlay {
+            *overlay = None;
+            self.close_overlay(child_alt);
+        }
+    }
+
+    pub fn action_menu(&self, pending: Option<Option<u32>>) {
+        let Some(target) = pending else { return };
+        let mut overlay = self.overlay.lock().unwrap();
+        if overlay.is_some() {
+            return;
+        }
+        let parser = self.screen.lock().unwrap();
+        let (rows, cols) = parser.screen().size();
+        let child_alt = parser.screen().alternate_screen();
+        drop(parser);
+        let target = target.map(|n| self.target_name(n)).or_else(|| self.partner_name());
+        *self.out_gate.lock().unwrap() = Some(Vec::new());
+        let mut out = String::new();
+        if !child_alt {
+            out.push_str("\x1b[?1049h");
+        }
+        out.push_str(&help::actions(&self.name, target.as_deref(), rows.get(), cols.get()));
+        write_stdout(out.as_bytes());
+        *overlay = Some(Overlay::Menu { child_alt });
     }
 
     fn open_picker(&self, target: Option<u32>) {
@@ -743,10 +788,12 @@ impl Bridge {
     }
 
     /// Tastatureingabe, solange Auswahl oder Hilfe offen ist.
-    pub fn overlay_input(&self, input: &[u8]) {
+    pub fn overlay_input(&self, input: &[u8]) -> usize {
         let mut guard = self.overlay.lock().unwrap();
-        let Some(overlay) = guard.as_mut() else { return };
+        let Some(overlay) = guard.as_mut() else { return 0 };
+        let mut consumed = input.len();
         let outcome = match overlay {
+            Overlay::Menu { .. } => return 0,
             Overlay::Picker(open) => {
                 let mut action = Action::Continue;
                 for key in picker::parse_keys(input) {
@@ -768,10 +815,11 @@ impl Bridge {
                 }
             }
             Overlay::Help { child_alt } => {
-                let close = input.iter().any(|b| {
+                let close = input.iter().position(|b| {
                     matches!(b.to_ascii_lowercase(), 0x1b | b'\r' | b'\n' | b'h' | b'?' | b'q')
                 });
-                if close {
+                if let Some(at) = close {
+                    consumed = at + 1;
                     OverlayOutcome::Help { child_alt: *child_alt }
                 } else {
                     let _ = terminal::bell(&mut std::io::stdout().lock());
@@ -780,7 +828,7 @@ impl Bridge {
             }
         };
         if matches!(outcome, OverlayOutcome::Stay) {
-            return;
+            return consumed;
         }
         guard.take();
         drop(guard);
@@ -795,6 +843,7 @@ impl Bridge {
             OverlayOutcome::Help { child_alt } => self.close_overlay(child_alt),
             OverlayOutcome::Stay => {}
         }
+        consumed
     }
 
     /// Bildschirm des Programms wiederherstellen und zurückgehaltene Ausgabe nachreichen.
@@ -888,6 +937,7 @@ impl Bridge {
 
     /// Meldung für `NOTE_TIME` in den Fenstertitel, danach wieder der Programmtitel.
     fn title(&self, msg: &str) {
+        self.feedback.lock().unwrap().note(msg);
         let label = self.label();
         self.title_state.lock().unwrap().note_until = Some(Instant::now() + NOTE_TIME);
         let _ =

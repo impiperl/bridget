@@ -104,7 +104,8 @@ fn pair_here_opens_two_linked_tinted_panes() {
     assert!(ls.contains("L            ⇄ R") && ls.contains("R            ⇄ L"), "{ls}");
     assert_eq!(tmux(&["list-panes", "-t", "bridget-L-R"]).lines().count(), 2);
     assert!(tmux(&["show-options", "-g", "status"]).contains("status on"));
-    assert!(tmux(&["show-options", "-g", "status-right"]).contains("Ctrl-Space Enter  SEND"));
+    let status = tmux(&["show-options", "-t", "bridget-L-R", "status-right"]);
+    assert!(status.contains("Actions") && status.contains("Ctrl-Space Enter"), "{status}");
     // Die Farben landen im Bild, das tmux an das „Terminal“ schickt.
     s.expect("48;2;12;23;36"); // blau auf Schwarz
     s.expect("48;2;12;28;13"); // grün auf Schwarz
@@ -112,6 +113,30 @@ fn pair_here_opens_two_linked_tinted_panes() {
         tmux(&["show-options", "-t", "bridget-L-R", "destroy-unattached"]).trim(),
         "destroy-unattached on"
     );
+
+    // A real send animates only the reserved status area, and the frame disappears.
+    s.send(b"animation-payload\r");
+    s.expect("animation-payload");
+    assert!(ctl(&dir, &["send", "L", "--screen"]).status.success());
+    let deadline = std::time::Instant::now() + Duration::from_secs(3);
+    loop {
+        let options = tmux(&["show-options", "-g"]);
+        if options.lines().any(|line| line.starts_with("@bridget_feedback_") && line.contains('●'))
+        {
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "No transfer animation: {options}");
+        std::thread::sleep(Duration::from_millis(30));
+    }
+    assert!(!tmux(&["capture-pane", "-p", "-t", "bridget-L-R"]).contains('●'));
+    let deadline = std::time::Instant::now() + Duration::from_secs(3);
+    while tmux(&["show-options", "-g"])
+        .lines()
+        .any(|line| line.starts_with("@bridget_feedback_") && line.contains('●'))
+    {
+        assert!(std::time::Instant::now() < deadline, "Animation did not stop");
+        std::thread::sleep(Duration::from_millis(50));
+    }
 
     // Fenster zu (Client weg) → Sitzung und beide Konsolen enden.
     s.child.kill().unwrap();

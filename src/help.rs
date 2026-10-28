@@ -77,6 +77,45 @@ pub fn render(name: &str, partner: Option<&str>, rows: u16, cols: u16) -> String
         });
     }
 
+    render_box(lines, rows, cols)
+}
+
+/// The menu is driven by the existing prefix filter, so old shortcuts and numbered
+/// destinations keep exactly the same meaning.
+pub fn actions(name: &str, target: Option<&str>, rows: u16, cols: u16) -> String {
+    let target = target.unwrap_or(tr!("not connected", "nicht verbunden"));
+    let lines = vec![
+        tr!("bridget Actions", "bridget Aktionen").into(),
+        format!("{name} → {target}"),
+        String::new(),
+        tr!(
+            "[Enter] Last response   [A] Select lines",
+            "[Enter] Letzte Antwort  [A] Zeilen auswählen"
+        )
+        .into(),
+        tr!(
+            "[B] Screen             [M] Mouse selection",
+            "[B] Bildschirm         [M] Mausmarkierung"
+        )
+        .into(),
+        tr!("[V] Connect            [T] Disconnect", "[V] Verbinden          [T] Trennen").into(),
+        tr!(
+            "[Tab] Next terminal    [N] New terminal",
+            "[Tab] Nächstes Terminal [N] Neues Terminal"
+        )
+        .into(),
+        String::new(),
+        tr!(
+            "Number first: choose destination, e.g. 3 Enter",
+            "Nummer davor: Ziel wählen, z.B. 3 Enter"
+        )
+        .into(),
+        tr!("[H] Help               [Esc] Cancel", "[H] Hilfe              [Esc] Abbrechen").into(),
+    ];
+    render_box(lines, usize::from(rows.max(1)), usize::from(cols.max(1)))
+}
+
+fn render_box(lines: Vec<String>, rows: usize, cols: usize) -> String {
     let content_width = lines.iter().map(|line| width(line)).max().unwrap_or(1);
     let box_width = (content_width + 4).min(cols.saturating_sub(2).max(1));
     let inner_width = box_width.saturating_sub(4);
@@ -91,7 +130,7 @@ pub fn render(name: &str, partner: Option<&str>, rows: u16, cols: u16) -> String
         return out;
     }
 
-    out.push_str(&format!("\x1b[{top};{left}H\x1b[36m┌{}┐\x1b[0m", "─".repeat(box_width - 2)));
+    out.push_str(&format!("\x1b[{top};{left}H\x1b[36m╭{}╮\x1b[0m", "─".repeat(box_width - 2)));
     for (i, line) in lines.into_iter().take(visible).enumerate() {
         let style = if i == 0 {
             "\x1b[1;36m"
@@ -111,7 +150,7 @@ pub fn render(name: &str, partner: Option<&str>, rows: u16, cols: u16) -> String
         ));
     }
     out.push_str(&format!(
-        "\x1b[{};{}H\x1b[36m└{}┘\x1b[0m",
+        "\x1b[{};{}H\x1b[36m╰{}╯\x1b[0m",
         top + visible + 1,
         left,
         "─".repeat(box_width - 2)
