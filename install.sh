@@ -117,7 +117,8 @@ External memory shared by Claude and Codex: `{memory}`
 - At session startup, read `{memory}/INDEX.md`, all files in `regeln/` (rules), and open
   handoffs in `uebergaben/`. Those rules apply like instructions in this file.
 - Entry format and when to write: `{memory}/GLOSSAR.md`.
-- Record useful information for future sessions there; no secrets.
+- Record useful information for future sessions there; no secrets. Keep your own private
+  memory to a pointer to this folder; everything worth remembering goes here.
 - `{memory}/NOTIZEN.md` is a scratchpad: write, edit, or delete without asking.
 - `{memory}/sitzungen/` contains dumps Bridget writes when a window closes or on
   `/compact` and `/clear` (last exchange, resume command). When continuing earlier

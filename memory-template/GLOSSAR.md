@@ -48,7 +48,7 @@ Do not load everything at once. Use the index to decide what is relevant.
 | **Handoff** | A note for the next session: goal, state, open work, and next steps. |
 | **Source** | Who wrote the entry: `mensch` (human), `claude`, or `codex`. |
 | **Project** | Short workspace name (for example, `bridget`) or `alle` (all projects). |
-| **Dump** | A Bridget-generated file in `sitzungen/`: program, working directory, event, resume command, and last exchange or output; Claude compaction dumps also include the summary. Raw data, not verified facts. |
+| **Dump** | A Bridget-generated file in `sitzungen/`: program, working directory, event, resume command, and last exchange or output; Claude compaction dumps also include the summary (shortened to request, pending tasks, current work and next step). Consoles without a single prompt and empty `/clear` get no dump. Raw data, not verified facts. |
 | **Note** | A line or short paragraph in `NOTIZEN.md`. Informal; no front matter or index entry required. |
 | **Obsolete** | An entry that is no longer accurate. Update or archive it rather than leaving it misleading. |
 

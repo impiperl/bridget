@@ -37,6 +37,11 @@ pub struct Console<'a> {
 
 pub fn console(c: &Console) -> Option<PathBuf> {
     let dir = dir()?;
+    // Genau, wenn der Hook die Sitzung dieser Konsole notiert hat; sonst geschätzt.
+    let exact = crate::hook::console_session(c.name, c.started);
+    if !worth_keeping(c, exact.as_ref()) {
+        return None;
+    }
     let what = match c.kind {
         "default" => c.program.split_whitespace().next().unwrap_or("shell"),
         kind => kind,
@@ -54,8 +59,7 @@ pub fn console(c: &Console) -> Option<PathBuf> {
     if let Some(p) = &c.partner {
         body += &format!("- Verbunden mit: `{p}`\n");
     }
-    // Genau, wenn der Hook die Sitzung dieser Konsole notiert hat; sonst geschätzt.
-    let exact = crate::hook::console_session(c.name, c.started).map(|(cli, id)| {
+    let exact = exact.map(|(cli, id)| {
         let cmd = if cli == "codex" { "codex resume" } else { "claude --resume" };
         format!("`cd {} && {cmd} {id}`", c.cwd.display())
     });
@@ -64,6 +68,33 @@ pub fn console(c: &Console) -> Option<PathBuf> {
     }
     body += &section("Letzte Ausgabe", &c.last);
     write(&dir, c.name, &body)
+}
+
+/// Konsolen, in denen nichts geschah, bekommen keinen Dump: claude/codex ohne eine Frage seit
+/// dem Start (die CLI hat dann keinen Verlauf mit Eingabe geschrieben), eine Shell, die nur
+/// ihren Prompt zeigt. Schließt man ein Fenster mit fünf frischen Konsolen, entstanden sonst
+/// fünf Dumps mit nichts als Banner und Prompt.
+fn worth_keeping(c: &Console, exact: Option<&(String, String)>) -> bool {
+    match c.kind {
+        "claude" | "codex" => {
+            let found = sessions(c.kind, c.cwd, c.started);
+            found
+                .iter()
+                .filter(|(id, _)| exact.is_none_or(|(_, want)| want == id))
+                .any(|(_, path)| crate::hook::asked(c.kind, path))
+        }
+        _ => !only_prompt(&c.last),
+    }
+}
+
+/// Höchstens eine Zeile, die wie ein Shell-Prompt endet (`$`, `#`, `%`, `>`).
+fn only_prompt(last: &str) -> bool {
+    let mut lines = last.lines().map(str::trim).filter(|l| !l.is_empty());
+    match (lines.next(), lines.next()) {
+        (None, _) => true,
+        (Some(l), None) => l.ends_with(['$', '#', '%', '>']),
+        _ => false,
+    }
 }
 
 pub struct DuoSide {
@@ -204,23 +235,12 @@ fn stamp(t: SystemTime) -> (String, String) {
 /// Sitzungsdatei der CLI, die seit dem Start in diesem Ordner geschrieben wurde. Bei mehreren
 /// Treffern (z.B. zweimal claude im selben Ordner) werden alle genannt.
 fn resume_hint(kind: &str, cwd: &Path, since: SystemTime) -> Option<String> {
-    let home = PathBuf::from(std::env::var_os("HOME")?);
-    let root = |var: &str, dot: &str| {
-        std::env::var_os(var).map(PathBuf::from).unwrap_or_else(|| home.join(dot))
-    };
-    let (ids, cmd, fallback) = match kind {
-        "claude" => (
-            claude_sessions(&root("CLAUDE_CONFIG_DIR", ".claude"), cwd, since),
-            "claude --resume",
-            "claude --continue",
-        ),
-        "codex" => (
-            codex_sessions(&root("CODEX_HOME", ".codex"), cwd, since),
-            "codex resume",
-            "codex resume --last",
-        ),
+    let (cmd, fallback) = match kind {
+        "claude" => ("claude --resume", "claude --continue"),
+        "codex" => ("codex resume", "codex resume --last"),
         _ => return None,
     };
+    let ids: Vec<String> = sessions(kind, cwd, since).into_iter().map(|(id, _)| id).collect();
     let at = cwd.display();
     Some(match ids.as_slice() {
         [] => format!("`cd {at} && {fallback}` (Sitzung nicht gefunden, neueste im Ordner)"),
@@ -232,25 +252,38 @@ fn resume_hint(kind: &str, cwd: &Path, since: SystemTime) -> Option<String> {
     })
 }
 
+/// (ID, Verlaufsdatei) der Sitzungen von `kind`, die seit `since` in `cwd` geschrieben wurden.
+fn sessions(kind: &str, cwd: &Path, since: SystemTime) -> Vec<(String, PathBuf)> {
+    let Some(home) = std::env::var_os("HOME").map(PathBuf::from) else { return Vec::new() };
+    let root = |var: &str, dot: &str| {
+        std::env::var_os(var).map(PathBuf::from).unwrap_or_else(|| home.join(dot))
+    };
+    match kind {
+        "claude" => claude_sessions(&root("CLAUDE_CONFIG_DIR", ".claude"), cwd, since),
+        "codex" => codex_sessions(&root("CODEX_HOME", ".codex"), cwd, since),
+        _ => Vec::new(),
+    }
+}
+
 fn modified_since(path: &Path, since: SystemTime) -> bool {
     fs::metadata(path).and_then(|m| m.modified()).is_ok_and(|t| t >= since)
 }
 
 /// `~/.claude/projects/<ordner, jedes Nicht-Alphanumerische als ->/<uuid>.jsonl`
-fn claude_sessions(root: &Path, cwd: &Path, since: SystemTime) -> Vec<String> {
+fn claude_sessions(root: &Path, cwd: &Path, since: SystemTime) -> Vec<(String, PathBuf)> {
     let key: String = cwd
         .to_string_lossy()
         .chars()
         .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
         .collect();
     let dir = root.join("projects").join(key);
-    let mut ids: Vec<String> = fs::read_dir(dir)
+    let mut ids: Vec<(String, PathBuf)> = fs::read_dir(dir)
         .into_iter()
         .flatten()
         .flatten()
         .map(|e| e.path())
         .filter(|p| p.extension().is_some_and(|x| x == "jsonl") && modified_since(p, since))
-        .filter_map(|p| p.file_stem().map(|s| s.to_string_lossy().into_owned()))
+        .filter_map(|p| Some((p.file_stem()?.to_string_lossy().into_owned(), p)))
         .collect();
     ids.sort();
     ids
@@ -258,7 +291,7 @@ fn claude_sessions(root: &Path, cwd: &Path, since: SystemTime) -> Vec<String> {
 
 /// `~/.codex/sessions/JJJJ/MM/TT/rollout-….jsonl`, erste Zeile `session_meta` mit `cwd`.
 /// Headless-Aufrufe (`codex exec`, z.B. aus `duo`) zählen nicht.
-fn codex_sessions(root: &Path, cwd: &Path, since: SystemTime) -> Vec<String> {
+fn codex_sessions(root: &Path, cwd: &Path, since: SystemTime) -> Vec<(String, PathBuf)> {
     let root = root.join("sessions");
     let mut days: Vec<String> =
         [since, SystemTime::now()].iter().map(|t| stamp(*t).0.replace('-', "/")).collect();
@@ -278,12 +311,12 @@ fn codex_sessions(root: &Path, cwd: &Path, since: SystemTime) -> Vec<String> {
                 && interactive
                 && let Some(id) = p["id"].as_str()
             {
-                ids.push(id.to_string());
+                ids.push((id.to_string(), path));
             }
         }
     }
     ids.sort();
-    ids.dedup();
+    ids.dedup_by(|a, b| a.0 == b.0);
     ids
 }
 
@@ -314,6 +347,14 @@ mod tests {
     }
 
     #[test]
+    fn bare_shell_prompt_is_not_worth_a_dump() {
+        assert!(only_prompt(""));
+        assert!(only_prompt("\n[fant@localhost bridget]$ \n"));
+        assert!(!only_prompt("fertig"));
+        assert!(!only_prompt("$ ls\nREADME.md\n$"));
+    }
+
+    #[test]
     fn finds_sessions_written_since_start() {
         let home = std::env::temp_dir().join(format!("bridget-dump-{}", std::process::id()));
         let cwd = Path::new("/w/pro.j");
@@ -332,8 +373,14 @@ mod tests {
         fs::write(xdir.join("rollout-a.jsonl"), meta("T1", "codex_cli_rs") + "\n").unwrap();
         fs::write(xdir.join("rollout-b.jsonl"), meta("T2", "codex_exec") + "\n").unwrap();
         let (claude, codex) = (home.join(".claude"), home.join(".codex"));
-        assert_eq!(claude_sessions(&claude, cwd, since), vec!["u1"]);
-        assert_eq!(codex_sessions(&codex, cwd, since), vec!["T1"]);
+        assert_eq!(
+            claude_sessions(&claude, cwd, since),
+            vec![("u1".into(), cdir.join("u1.jsonl"))]
+        );
+        assert_eq!(
+            codex_sessions(&codex, cwd, since),
+            vec![("T1".into(), xdir.join("rollout-a.jsonl"))]
+        );
         let later = SystemTime::now() + Duration::from_secs(60);
         assert!(claude_sessions(&claude, cwd, later).is_empty());
         fs::remove_dir_all(&home).unwrap();

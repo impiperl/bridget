@@ -48,6 +48,11 @@ fn transcript_of(cli: &str, path: &Path) -> Transcript {
     if cli == "codex" { codex_transcript(path) } else { claude_transcript(path) }
 }
 
+/// Ob der Verlauf `path` mindestens eine Eingabe des Menschen enthält.
+pub fn asked(cli: &str, path: &Path) -> bool {
+    transcript_of(cli, path).last.prompt.is_some()
+}
+
 fn handle(cli: &str, v: &Value, raw: &str) -> Option<()> {
     let event = v["hook_event_name"].as_str()?;
     let session = v["session_id"].as_str()?;
@@ -214,10 +219,14 @@ fn compacted(
     trigger: Option<&str>,
     summary: Option<String>,
 ) -> Option<()> {
+    if before.prompt.is_none() && summary.is_none() {
+        return None;
+    }
     let how = match trigger {
         Some("auto") => "automatisch (Kontext voll)",
         _ => "`/compact`",
     };
+    let summary = summary.as_deref().map(shorten_summary);
     let mut f = facts(cli, cwd, format!("Ereignis: kompaktiert, {how}; die Sitzung läuft weiter"));
     f.push(resume(cli, cwd, session));
     crate::dump::event(
@@ -233,7 +242,48 @@ fn compacted(
     .map(|_| ())
 }
 
+/// Abschnitte der claude-Zusammenfassung, die für die nächste Sitzung kaum taugen und den
+/// Dump auf über 20 KiB bringen: Details stehen im Verlauf, den „Fortsetzen“ öffnet.
+const SUMMARY_DROP: &[&str] = &[
+    "key technical concepts",
+    "files and code sections",
+    "errors and fixes",
+    "problem solving",
+    "all user messages",
+];
+
+/// Lässt die nummerierten Abschnitte aus `SUMMARY_DROP` weg (`3. Files and Code Sections:`
+/// am Zeilenanfang) und vermerkt das am Ende. Ohne solche Überschriften bleibt der Text.
+fn shorten_summary(text: &str) -> String {
+    let heading = |line: &str| {
+        let (num, rest) = line.split_once(". ")?;
+        (!num.is_empty() && num.bytes().all(|b| b.is_ascii_digit()) && rest.contains(':'))
+            .then(|| rest.to_lowercase())
+    };
+    let mut out = String::new();
+    let mut dropped = Vec::new();
+    let mut skipping = false;
+    for line in text.lines() {
+        if let Some(title) = heading(line) {
+            skipping = SUMMARY_DROP.iter().any(|d| title.starts_with(d));
+            if skipping {
+                dropped.push(line.trim_end_matches(':').to_string());
+            }
+        }
+        if !skipping {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    if dropped.is_empty() {
+        return text.to_string();
+    }
+    out += &format!("\n(Von bridget weggelassen: {}.)\n", dropped.join(", "));
+    out
+}
+
 fn cleared(cli: &str, old: &str, cwd: &Path, last: Exchange) -> Option<()> {
+    last.prompt.as_ref()?; // leere Sitzung geleert: nichts festzuhalten
     let cmd = if cli == "codex" { "`/clear` oder `/new`" } else { "`/clear`" };
     let mut f = facts(cli, cwd, format!("Ereignis: {cmd}, neue Sitzung begonnen"));
     f.push(resume(cli, cwd, old));
@@ -435,6 +485,22 @@ mod tests {
         assert_eq!(t.summary.as_deref(), Some("Zusammenfassung X"));
         assert_eq!(t.last, Exchange { prompt: Some("Frage 2".into()), answer: None });
         std::fs::remove_file(p).unwrap();
+    }
+
+    #[test]
+    fn summary_drops_bulky_sections() {
+        let text = "Intro\n1. Primary Request and Intent:\n   Ziel\n2. Key Technical Concepts:\n   viel\n\
+                    3. Files and Code Sections (main ones):\n   1. a.rs: x\n7. Pending Tasks:\n   offen\n";
+        let s = shorten_summary(text);
+        assert!(s.contains("Ziel") && s.contains("Pending Tasks:\n   offen"), "{s}");
+        assert!(!s.contains("viel") && !s.contains("a.rs"), "{s}");
+        assert!(
+            s.contains(
+                "weggelassen: 2. Key Technical Concepts, 3. Files and Code Sections (main ones)"
+            ),
+            "{s}"
+        );
+        assert_eq!(shorten_summary("nur Text"), "nur Text");
     }
 
     #[test]

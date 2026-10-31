@@ -25,7 +25,8 @@ changes. Existing memory files are never overwritten.
 When a console or a `duo` conversation ends, including when its window is closed,
 Bridget writes a dump to `sitzungen/`: the program, working directory, exit reason,
 resume command (`claude --resume …`, `codex resume …`), and last output (up to 16 KiB).
-Files use permissions `0600` and are removed after 14 days when the next dump is written.
+Consoles where nothing happened get no dump: Claude or Codex without a single prompt since
+the start, and shells that show nothing but their prompt. Files use permissions `0600` and are removed after 14 days when the next dump is written.
 Set `BRIDGET_NO_DUMP=1` to disable dumps; `duo` also supports `--no-memory`.
 
 The same happens on `/compact` (including automatic compaction) and `/clear` in Claude
@@ -33,6 +34,9 @@ and Codex (also `/new` in Codex), through hooks registered by `install.sh` in
 `~/.claude/settings.json` and `~/.codex/hooks.json`. They call `bridget hook claude|codex`
 and apply to all sessions, including those outside Bridget. On the next Codex startup,
 approve the hooks when prompted with “Hooks need review”; they will not run otherwise.
+Clearing an empty session writes nothing. From Claude's compaction summary the dump keeps
+the request, pending tasks, current work and next step; the bulky sections (technical
+concepts, files and code, errors, problem solving, all user messages) are left out.
 
 Memory folder names and metadata keys retain their original names for compatibility:
 
