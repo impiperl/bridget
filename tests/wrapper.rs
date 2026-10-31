@@ -24,6 +24,29 @@ fn propagates_exit_code() {
 }
 
 #[test]
+fn slash_exit_commands_reach_the_wrapped_program() {
+    for command in ["/exit", "/quit"] {
+        let mut s = Session::start(&[
+            "T",
+            "--",
+            "sh",
+            "-c",
+            r#"printf 'ready-for-exit\n'
+               IFS= read -r command
+               case "$command" in
+                 /exit|/quit) printf 'exit-received:%s\n' "$command";;
+                 *) exit 9;;
+               esac"#,
+        ]);
+        s.expect("ready-for-exit");
+        s.send(command.as_bytes());
+        s.send(b"\r");
+        s.expect(&format!("exit-received:{command}"));
+        assert_eq!(s.wait().exit_code(), 0);
+    }
+}
+
+#[test]
 fn double_prefix_reaches_program_single_prefix_does_not() {
     let mut s = Session::start(&[
         "T",

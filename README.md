@@ -146,6 +146,14 @@ in der `~/.vimrc`.
 Von außen: `bridget ls`, `bridget link A B`, `bridget unlink A`,
 `bridget send A --last|--screen`, `bridget config [PROG] [--init]`.
 
+## Sitzung beenden
+
+Bridget reicht die Beenden-Befehle an das gestartete Programm weiter. Bei Codex im
+Eingabefeld **`/exit` oder `/quit`** eingeben und normal `Enter` drücken — ohne
+`Ctrl-Space` davor. Ein bloßes `exit` ohne Schrägstrich ist dort eine Chatnachricht.
+In einer Shell beendet dagegen `exit` die Shell. Sobald das gestartete Programm endet,
+beendet sich auch dessen Bridget-Wrapper und sichert den Sitzungsdump wie oben beschrieben.
+
 ## duo
 
 ```bash
