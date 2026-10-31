@@ -1,19 +1,19 @@
 ---
 typ: index
-titel: Einstieg ins bridget-Gedächtnis
+titel: Getting started with Bridget memory
 ---
 
-# Gedächtnis: Index
+# Memory index
 
-Zuerst lesen. Format und Regeln zum Schreiben: [GLOSSAR.md](GLOSSAR.md).
-Lesereihenfolge: dieser Index → alle `regeln/` → offene `uebergaben/` → `wissen/` bei Bedarf.
-Freier Notizblock der KIs (schreiben und löschen erlaubt): [NOTIZEN.md](NOTIZEN.md).
-Dumps von bridget (Fenster geschlossen, `/compact`, `/clear`): `sitzungen/`, neueste zuletzt.
+Read this first. Entry format and writing rules: [GLOSSAR.md](GLOSSAR.md).
+Reading order: this index → all `regeln/` → open `uebergaben/` → `wissen/` as needed.
+Shared scratchpad (writing and deletion allowed): [NOTIZEN.md](NOTIZEN.md).
+Bridget dumps (window closed, `/compact`, `/clear`): `sitzungen/`, newest last.
 
-## Regeln
+## Rules
 
-- [Allgemeine Regeln](regeln/allgemein.md) — alle · gelten für jede Sitzung
+- [General rules](regeln/allgemein.md) — alle · apply to every session
 
-## Übergaben (offen)
+## Open handoffs
 
-## Wissen
+## Knowledge

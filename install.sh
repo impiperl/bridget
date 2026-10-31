@@ -1,21 +1,21 @@
 #!/usr/bin/env bash
-# bridget installieren: Binary bauen und nach ~/.local/bin kopieren, dazu das gemeinsame
-# Gedächtnis für claude und codex anlegen und beiden CLIs bekannt machen.
+# Install Bridget: build and copy the binary to ~/.local/bin, create shared memory,
+# and register it with Claude and Codex.
 #
-# Mehrfach ausführbar: Vorhandene Gedächtnis-Dateien werden nie überschrieben, der Hinweis-
-# Block in CLAUDE.md/AGENTS.md wird ersetzt statt doppelt angehängt.
+# Safe to rerun: existing memory files are never overwritten; the reference block in
+# CLAUDE.md/AGENTS.md is replaced rather than appended again.
 set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Aufruf: ./install.sh [Optionen]
+Usage: ./install.sh [options]
 
-  --bin DIR      Zielordner für das Binary (Standard: ~/.local/bin)
-  --memory DIR   Ordner für das Gedächtnis
-                 (Standard: $BRIDGET_MEMORY, sonst ~/.local/share/bridget/memory)
-  --no-build     nicht bauen, vorhandenes target/release/bridget nehmen
-  --no-agents    ~/.claude und ~/.codex nicht anfassen
-  -h, --help     diese Hilfe
+  --bin DIR      Binary installation directory (default: ~/.local/bin)
+  --memory DIR   Shared memory directory
+                 (default: $BRIDGET_MEMORY, otherwise ~/.local/share/bridget/memory)
+  --no-build     Skip building; use the existing target/release/bridget binary
+  --no-agents    Leave ~/.claude and ~/.codex unchanged
+  -h, --help     Show this help
 EOF
 }
 
@@ -27,12 +27,12 @@ agents=1
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --bin) bin_dir="${2:?--bin braucht einen Ordner}"; shift 2 ;;
-    --memory) memory="${2:?--memory braucht einen Ordner}"; shift 2 ;;
+    --bin) bin_dir="${2:?--bin requires a directory}"; shift 2 ;;
+    --memory) memory="${2:?--memory requires a directory}"; shift 2 ;;
     --no-build) build=0; shift ;;
     --no-agents) agents=0; shift ;;
     -h|--help) usage; exit 0 ;;
-    *) echo "Unbekannte Option: $1" >&2; usage >&2; exit 2 ;;
+    *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
 
@@ -40,7 +40,7 @@ say() { printf '\033[1m==>\033[0m %s\n' "$*"; }
 note() { printf '    %s\n' "$*"; }
 
 if [ "$(uname -s)" != "Linux" ]; then
-  echo "bridget läuft nur unter Linux (Unix-PTYs, SO_PEERCRED). Unter Windows: WSL." >&2
+  echo "Bridget runs on Linux only (Unix PTYs, SO_PEERCRED). On Windows, use WSL." >&2
   exit 1
 fi
 
@@ -50,78 +50,78 @@ if [ "$build" = 1 ]; then
   cargo="$(command -v cargo || true)"
   [ -z "$cargo" ] && [ -x "$HOME/.cargo/bin/cargo" ] && cargo="$HOME/.cargo/bin/cargo"
   if [ -z "$cargo" ]; then
-    echo "cargo nicht gefunden. Rust über https://rustup.rs installieren oder --no-build nehmen." >&2
+    echo "cargo not found. Install Rust from https://rustup.rs or use --no-build." >&2
     exit 1
   fi
-  say "Baue bridget (release)"
+  say "Building Bridget (release)"
   (cd "$repo" && "$cargo" build --release)
 fi
 
 src="$repo/target/release/bridget"
-[ -x "$src" ] || { echo "$src fehlt. Ohne --no-build erneut aufrufen." >&2; exit 1; }
+[ -x "$src" ] || { echo "$src is missing. Run again without --no-build." >&2; exit 1; }
 
-say "Installiere nach $bin_dir/bridget"
+say "Installing to $bin_dir/bridget"
 mkdir -p "$bin_dir"
 install -m 0755 "$src" "$bin_dir/bridget"
 case ":$PATH:" in
   *":$bin_dir:"*) ;;
-  *) note "Hinweis: $bin_dir steht nicht im PATH." ;;
+  *) note "Note: $bin_dir is not in PATH." ;;
 esac
-command -v tmux >/dev/null || note "Hinweis: tmux fehlt, 'bridget pair' und 'desk' brauchen es."
+command -v tmux >/dev/null || note "Note: tmux is missing; 'bridget pair' and 'desk' require it."
 
-# --- 2. Gedächtnis ----------------------------------------------------------------------
+# --- 2. Shared memory ----------------------------------------------------------------------
 
-say "Gedächtnis in $memory"
+say "Shared memory at $memory"
 mkdir -p "$memory"
 chmod 0700 "$memory"
 for d in regeln wissen uebergaben archiv sitzungen; do
   mkdir -p "$memory/$d"
 done
 
-# Vorlagen nur anlegen, wenn sie fehlen: Das Gedächtnis gehört nach der Installation den
-# Nutzern und den KIs, nicht mehr dem Installer.
+# Only create missing templates: after installation, the memory belongs to its users
+# and assistants, not to the installer.
 (cd "$repo/memory-template" && find . -type f) | while read -r f; do
   f="${f#./}"
   if [ -e "$memory/$f" ]; then
-    note "bleibt: $f"
+    note "kept: $f"
   else
     install -D -m 0600 "$repo/memory-template/$f" "$memory/$f"
-    note "neu:    $f"
+    note "new:  $f"
   fi
 done
 
-# --- 3. claude und codex Bescheid geben -------------------------------------------------
+# --- 3. Register with Claude and Codex -------------------------------------------------
 
 if [ "$agents" = 0 ]; then
-  say "Fertig (ohne Änderungen an ~/.claude und ~/.codex)."
+  say "Done (no changes to ~/.claude or ~/.codex)."
   exit 0
 fi
 
 if ! command -v python3 >/dev/null; then
-  note "python3 fehlt, CLAUDE.md/AGENTS.md bitte von Hand ergänzen (siehe README)."
+  note "python3 is missing; add the CLAUDE.md/AGENTS.md references manually (see README)."
   exit 0
 fi
 
-# Ersetzt den Block zwischen den Markierungen oder hängt ihn an. Vor der ersten Änderung
-# wird eine Sicherung <datei>.bak-bridget angelegt.
+# Replace the marked block or append it if missing. Before the first change, save
+# a backup as <file>.bak-bridget.
 put_block() {
   python3 - "$1" "$memory" <<'PY'
 import os, re, shutil, sys
 path, memory = sys.argv[1], sys.argv[2]
 begin, end = "<!-- bridget-memory:begin -->", "<!-- bridget-memory:end -->"
 block = f"""{begin}
-## Gemeinsames Gedächtnis (bridget)
+## Shared memory (Bridget)
 
-Externes Gedächtnis, das claude und codex teilen: `{memory}`
+External memory shared by Claude and Codex: `{memory}`
 
-- Beim Sitzungsstart `{memory}/INDEX.md` lesen, dann alle Dateien in `regeln/` und die
-  offenen Übergaben in `uebergaben/`. Regeln dort gelten wie Anweisungen in dieser Datei.
-- Wie Einträge aussehen und wann man schreibt: `{memory}/GLOSSAR.md`.
-- Dort Merkenswertes ablegen, das für spätere Sitzungen gilt; keine Geheimnisse.
-- `{memory}/NOTIZEN.md` ist ein freier Notizblock: schreiben, ändern, löschen ohne Rückfrage.
-- `{memory}/sitzungen/` enthält Dumps, die bridget beim Schließen eines Fensters und bei
-  `/compact` und `/clear` schreibt (letzte Frage/Antwort, Befehl zum Fortsetzen). Beim
-  Anknüpfen an frühere Arbeit die neuesten lesen.
+- At session startup, read `{memory}/INDEX.md`, all files in `regeln/` (rules), and open
+  handoffs in `uebergaben/`. Those rules apply like instructions in this file.
+- Entry format and when to write: `{memory}/GLOSSAR.md`.
+- Record useful information for future sessions there; no secrets.
+- `{memory}/NOTIZEN.md` is a scratchpad: write, edit, or delete without asking.
+- `{memory}/sitzungen/` contains dumps Bridget writes when a window closes or on
+  `/compact` and `/clear` (last exchange, resume command). When continuing earlier
+  work, read the newest relevant dumps.
 {end}
 """
 old = open(path, encoding="utf-8").read() if os.path.exists(path) else ""
@@ -131,29 +131,29 @@ if pat.search(old):
 else:
     new = old + ("\n" if old and not old.endswith("\n") else "") + ("\n" if old else "") + block
 if new == old:
-    print("    unverändert: " + path)
+    print("    unchanged: " + path)
     sys.exit(0)
 if old and not os.path.exists(path + ".bak-bridget"):
     shutil.copy2(path, path + ".bak-bridget")
 os.makedirs(os.path.dirname(path), exist_ok=True)
 open(path, "w", encoding="utf-8").write(new)
-print("    eingetragen: " + path)
+print("    updated: " + path)
 PY
 }
 
-say "Verweis für claude und codex"
+say "Registering shared memory with Claude and Codex"
 put_block "$HOME/.claude/CLAUDE.md"
 put_block "${CODEX_HOME:-$HOME/.codex}/AGENTS.md"
 
-# claude: Ordner als zusätzliches Arbeitsverzeichnis freigeben, damit Lesen und Schreiben
-# dort ohne Rückfrage nach dem Pfad gehen.
+# Claude: grant the memory folder as an additional working directory so reading and
+# writing there does not require a separate path approval.
 python3 - "$HOME/.claude/settings.json" "$memory" <<'PY'
 import json, os, shutil, sys
 path, memory = sys.argv[1], sys.argv[2]
 data = json.load(open(path, encoding="utf-8")) if os.path.exists(path) else {}
 dirs = data.setdefault("permissions", {}).setdefault("additionalDirectories", [])
 if memory in dirs:
-    print("    unverändert: " + path)
+    print("    unchanged: " + path)
     sys.exit(0)
 if os.path.exists(path) and not os.path.exists(path + ".bak-bridget"):
     shutil.copy2(path, path + ".bak-bridget")
@@ -165,10 +165,9 @@ with open(path, "w", encoding="utf-8") as f:
 print("    additionalDirectories: " + path)
 PY
 
-# Hooks: Bei /compact und /clear schreibt `bridget hook` einen Dump nach sitzungen/.
-# Welche Ereignisse wann kommen, steht in src/hook.rs. Fremde Hooks bleiben, ein
-# bridget-Eintrag (erkannt am Befehl) wird je Ereignis einmal angelegt bzw. aktualisiert und
-# bei Ereignissen, die nicht mehr gebraucht werden, entfernt.
+# Hooks: on /compact and /clear, `bridget hook` writes a dump to sitzungen/.
+# See src/hook.rs for event timing. Preserve other hooks; add or update one Bridget
+# entry per event (identified by its command), and remove obsolete Bridget entries.
 add_hooks() {
   python3 - "$1" "$2" "$3" <<'PY'
 import json, os, shutil, sys
@@ -197,7 +196,7 @@ for event in events:
     if not found:
         groups.append({"hooks": [mine]})
 if json.dumps(data, sort_keys=True) == old:
-    print("    unverändert: " + path)
+    print("    unchanged: " + path)
     sys.exit(0)
 if os.path.exists(path) and not os.path.exists(path + ".bak-bridget"):
     shutil.copy2(path, path + ".bak-bridget")
@@ -213,24 +212,24 @@ codex_hooks="${CODEX_HOME:-$HOME/.codex}/hooks.json"
 codex_before="$(cat "$codex_hooks" 2>/dev/null || true)"
 add_hooks "$codex_hooks" "$bin_dir/bridget hook codex" "PreCompact,SessionStart"
 if [ "$(cat "$codex_hooks" 2>/dev/null)" != "$codex_before" ]; then
-  note "codex fragt beim nächsten Start „Hooks need review“: die bridget-Hooks freigeben"
-  note "(„Trust all and continue“ oder einzeln über „Review hooks“), sonst laufen sie nicht."
+  note 'On the next Codex startup, approve the Bridget hooks at "Hooks need review"'
+  note '(use "Trust all and continue" or "Review hooks"); otherwise they will not run.'
 fi
 
-# codex: config.toml wird nicht automatisch geändert (TOML ohne Parser zu bearbeiten ist zu
-# riskant). Lesen geht überall, Schreiben im Sandbox-Modus workspace-write braucht das hier.
+# Codex: config.toml is not edited automatically because changing TOML without a
+# parser is unsafe. Reads work everywhere; workspace-write needs this writable root.
 codex_cfg="${CODEX_HOME:-$HOME/.codex}/config.toml"
 if ! grep -qsF "$memory" "$codex_cfg"; then
-  note "codex darf dort erst schreiben, wenn in $codex_cfg steht:"
+  note "To let Codex write there, add this to $codex_cfg:"
   note "  [sandbox_workspace_write]"
   note "  writable_roots = [\"$memory\"]"
 fi
 
 cat <<EOF
 
-Fertig. Gedächtnis: $memory
-'bridget duo' gibt beiden Seiten Index und Regeln in der Einleitung mit (--no-memory
-schaltet das ab); headless wird dort nur gelesen.
-Beim Beenden oder Schließen des Fensters und bei /compact und /clear (claude, codex)
-schreibt bridget einen Dump nach sitzungen/ (BRIDGET_NO_DUMP=1 schaltet das ab).
+Done. Shared memory: $memory
+'bridget duo' includes the index and rules in both sides' initial context (disable with
+--no-memory); headless runs are read-only.
+When a session ends or its window closes, and on /compact and /clear (Claude, Codex),
+Bridget writes a dump to sitzungen/ (disable with BRIDGET_NO_DUMP=1).
 EOF

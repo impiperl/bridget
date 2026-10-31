@@ -32,7 +32,7 @@ trim_prefix = '^(\s*)● '
 
 [profile.codex]
 match = ["codex"]
-# Im Alternate Screen gäbe es keinen Verlauf, nur das untere Ende einer langen Antwort.
+# Alternate screen mode has no scrollback, only the end of a long response.
 args = ["--no-alt-screen"]
 last = "screen-diff"
 prompt = '^›( |$)'

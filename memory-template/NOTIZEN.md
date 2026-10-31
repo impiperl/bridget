@@ -1,16 +1,16 @@
 ---
 typ: notizen
-titel: Interne Notizen der KIs, frei benutzbar
+titel: Shared scratchpad for AI assistants
 ---
 
-# Notizen
+# Notes
 
-Notizblock für claude und codex. Hier gelten die Schreibregeln aus `GLOSSAR.md` **nicht**,
-außer: keine Geheimnisse. Schreiben, ändern, löschen ohne Rückfrage. Kein Kopf pro Notiz,
-kein Indexeintrag nötig.
+Scratchpad for Claude and Codex. The writing rules in `GLOSSAR.md` **do not** apply here,
+except: no secrets. Write, edit, and delete without asking. Individual notes need neither
+front matter nor an index entry.
 
-Damit die andere KI etwas damit anfangen kann, je Notiz eine Zeile mit Datum und Quelle:
-`2026-10-24 claude: …`. Was dauerhaft wichtig wird, als Eintrag nach `wissen/` übernehmen
-und hier löschen.
+Use one line per note, with a date and source, so the other assistant can use it:
+`2026-10-31 claude: …`. Move anything of lasting importance into an entry in `wissen/`
+and remove it from this scratchpad.
 
 ---

@@ -1,16 +1,15 @@
 ---
 typ: regel
-titel: Allgemeine Regeln für jede Sitzung
+titel: General rules for every session
 projekt: alle
 quelle: mensch
-stand: 2026-10-24
-tags: [allgemein]
+stand: 2026-10-31
+tags: [general]
 ---
 
-Regeln, die für jede KI-Instanz auf diesem Rechner gelten. Eine Regel pro Aufzählungspunkt,
-jeweils mit kurzem Grund.
+Rules for every AI assistant on this machine. One rule per bullet, each with a brief reason.
 
-- Dieses Gedächtnis beim Sitzungsstart lesen, wie in `GLOSSAR.md` beschrieben.
-  **Warum:** Neue Instanzen sollen nicht bei null anfangen.
-- Vor dem Ende einer längeren Arbeit eine Übergabe in `uebergaben/` schreiben, wenn etwas
-  offen bleibt. **Warum:** Die nächste Sitzung soll nahtlos weitermachen können.
+- Read this memory at the start of each session, as described in `GLOSSAR.md`.
+  **Why:** New sessions should build on previous work.
+- Before ending a longer task, write a handoff in `uebergaben/` if anything remains open.
+  **Why:** The next session should be able to continue without losing context.

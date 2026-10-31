@@ -1,2 +1,2 @@
-# Kommt dem handformatierten Stil am nächsten (kurze Ausdrücke bleiben einzeilig).
+# Keep short expressions on one line, close to the project's hand-formatted style.
 use_small_heuristics = "Max"

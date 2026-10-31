@@ -1,181 +1,202 @@
 # bridget
 
-Aufsatz für Konsolenprogramme. Text per Hotkey zwischen zwei Konsolen schicken, und zwei
-KI-CLIs (`claude`, `codex`) kontrolliert miteinander reden lassen.
+Bridget connects AI assistants and shells in the terminal, with tabs, hotkey-based text
+sharing, and shared memory for Claude and Codex. Written in Rust.
 
-Nur Linux: bridget braucht Unix-PTYs und `SO_PEERCRED` für die Socket-Prüfung.
+Linux only: Bridget requires Unix PTYs and `SO_PEERCRED` to verify socket peers.
 
-## Bauen
+## Build and install
 
 ```bash
 cargo build --release
 cp target/release/bridget ~/.local/bin/
-cargo test            # Unit- und Integrationstests (laufen in Test-PTYs)
+cargo test            # Unit and integration tests (run in test PTYs)
 ```
 
-Oder alles auf einmal: `./install.sh` (`--help` für Optionen). Das baut, installiert nach
-`~/.local/bin` und legt ein **gemeinsames Gedächtnis** für claude und codex an
-(`~/.local/share/bridget/memory`, anders mit `--memory` oder `BRIDGET_MEMORY`). Neue
-Sitzungen lesen dort `INDEX.md`, die Regeln in `regeln/` und offene Übergaben; wie Einträge
-aussehen, steht in `GLOSSAR.md`. Der Installer trägt einen Verweis in `~/.claude/CLAUDE.md`
-und `~/.codex/AGENTS.md` ein und gibt den Ordner in `~/.claude/settings.json` frei
-(Sicherung jeweils als `*.bak-bridget`). `--no-agents` lässt beides weg. Vorhandene
-Gedächtnis-Dateien werden nie überschrieben.
+Or run `./install.sh` to do everything at once (`--help` lists the options). It builds
+Bridget, installs it in `~/.local/bin`, and creates **shared memory** for Claude and Codex
+in `~/.local/share/bridget/memory` (override with `--memory` or `BRIDGET_MEMORY`). New
+sessions read `INDEX.md`, the rules in `regeln/`, and open handoffs; `GLOSSAR.md` describes
+the entry format. The installer adds a reference to `~/.claude/CLAUDE.md` and
+`~/.codex/AGENTS.md`, and grants access to the folder in `~/.claude/settings.json`
+(backups are saved as `*.bak-bridget`). Use `--no-agents` to skip those configuration
+changes. Existing memory files are never overwritten.
 
-Beim Beenden einer Konsole oder eines `duo`-Gesprächs, auch wenn das Fenster geschlossen wird,
-schreibt bridget einen Dump nach `sitzungen/`: Programm, Ordner, wie es endete, den Befehl
-zum Fortsetzen (`claude --resume …`, `codex resume …`) und die letzte Ausgabe (höchstens
-16 KiB). Dateien `0600`, nach 14 Tagen gelöscht. `BRIDGET_NO_DUMP=1` schaltet das ab, bei
-`duo` auch `--no-memory`.
+When a console or a `duo` conversation ends, including when its window is closed,
+Bridget writes a dump to `sitzungen/`: the program, working directory, exit reason,
+resume command (`claude --resume …`, `codex resume …`), and last output (up to 16 KiB).
+Files use permissions `0600` and are removed after 14 days when the next dump is written.
+Set `BRIDGET_NO_DUMP=1` to disable dumps; `duo` also supports `--no-memory`.
 
-Dasselbe bei `/compact` (auch automatischem Kompaktieren) und `/clear` in claude und codex
-(dort auch `/new`), über Hooks, die `install.sh` einträgt (`~/.claude/settings.json`,
-`~/.codex/hooks.json`). Sie rufen `bridget hook claude|codex` auf und gelten für alle
-Sitzungen, nicht nur in bridget-Konsolen. codex fragt beim ersten Start danach
-„Hooks need review“: freigeben, sonst laufen sie nicht.
+The same happens on `/compact` (including automatic compaction) and `/clear` in Claude
+and Codex (also `/new` in Codex), through hooks registered by `install.sh` in
+`~/.claude/settings.json` and `~/.codex/hooks.json`. They call `bridget hook claude|codex`
+and apply to all sessions, including those outside Bridget. On the next Codex startup,
+approve the hooks when prompted with “Hooks need review”; they will not run otherwise.
 
-## Sprache
+Memory folder names and metadata keys retain their original names for compatibility:
 
-Die Bedienoberfläche ist standardmäßig englisch. Deutsch gilt wahlweise für einen
-Aufruf oder dauerhaft über die Umgebung:
+| Path | Purpose |
+|---|---|
+| `regeln/` | Rules |
+| `wissen/` | Knowledge |
+| `uebergaben/` | Handoffs |
+| `archiv/` | Archived entries |
+| `sitzungen/` | Session dumps |
+| `NOTIZEN.md` | Scratchpad |
+| `GLOSSAR.md` | Glossary and memory format |
+
+## Interface language
+
+The interface defaults to English. Select German for one invocation or through the
+environment:
 
 ```bash
 bridget --lang de pair claude codex
 export BRIDGET_LANG=de
 ```
 
-`--lang en|de` hat Vorrang vor `BRIDGET_LANG`. Die Sprache gilt auch für Hilfe,
-Fenstertitel, Auswahlmodus, `pair`, `duo` und gestartete Unterprozesse von Bridget.
-Englische und deutsche Farbnamen werden unabhängig von der Oberflächensprache akzeptiert.
+`--lang en|de` overrides `BRIDGET_LANG`. The setting applies to help, window titles,
+the line picker, `pair`, `duo`, and Bridget subprocesses. English and German color names
+are accepted regardless of the interface language.
 
-## Schnellstart: `pair`
-
-```bash
-bridget pair claude codex      # neues Fenster: links claude (A, blau), rechts codex (B, grün)
-bridget pair                   # zwei Shells
-bridget pair "claude --resume" bash --names X,Y --here   # in dieser Konsole
-```
-
-Läuft über tmux auf einem eigenen Server (`tmux -L bridget`), die eigenen tmux-Sitzungen
-bleiben unberührt. Beide Konsolen sind gleich verbunden. Ein Klick wählt den Pane, Shift
-plus Ziehen markiert Text für die Zwischenablage. Wird das Fenster geschlossen, enden beide
-Programme. Eine Leiste am unteren Rand zeigt die wichtigsten Pair-Shortcuts. Fenster:
-`$BRIDGET_TERMINAL`, sonst gnome-terminal, konsole, xfce4-terminal, xterm.
-
-## Arbeitsplatz: `desk`
+## Quick start: `pair`
 
 ```bash
-bridget desk claude codex          # oben 1 = claude, 2 = codex (verbunden), unten Terminal 3
-bridget desk claude codex --tabs 3 # unten Terminal 3, 4, 5
-bridget desk --here                # in dieser Konsole
+bridget pair claude codex      # New window: Claude on the left (A, blue), Codex on the right (B, green)
+bridget pair                   # Two shells
+bridget pair "claude --resume" bash --names X,Y --here   # In this terminal
 ```
 
-Wie `pair`, aber mit einem Terminal-Bereich unten über die ganze Breite. Seine Tabs sind
-nummeriert (3, 4, …) und stehen in der Leiste unten, der sichtbare ist hervorgehoben. Jeder
-Tab ist eine eigene bridget-Konsole; die versteckten laufen weiter. Endet ein Tab, rückt der
-nächste nach. Ist `1` schon belegt (zweiter `desk`), heißen die Konsolen `2-1`, `2-2` …
+This uses a dedicated tmux server (`tmux -L bridget`) and leaves your existing tmux
+sessions alone. Both consoles can send to each other. Click to select a pane; hold
+Shift and drag to select text for the terminal clipboard. Closing the window ends both
+programs. The bottom bar shows the main pair shortcuts. The terminal is selected from
+`$BRIDGET_TERMINAL`, then gnome-terminal, konsole, xfce4-terminal, or xterm.
 
-**Konsole wechseln:** In einen sichtbaren Bereich klicken oder direkt `Alt+1`, `Alt+2`,
-`Alt+3` … drücken. `F1` öffnet die Hilfe. Die Pane-Ränder zeigen Position, Konsolentitel
-und `AKTIV`/`inaktiv`; die untere Leiste beschriftet alle Wechselziele. Für Terminal 10 und
-höher sowie als universeller Fallback gilt weiter `Ctrl-Space`, Nummer, `Tab`.
+## Workspace: `desk`
 
-| Taste nach `Ctrl-Space` | Wirkung |
+```bash
+bridget desk claude codex          # Top: 1 = Claude, 2 = Codex (connected); bottom: terminal 3
+bridget desk claude codex --tabs 3  # Bottom terminals: 3, 4, 5
+bridget desk --here                # In this terminal
+```
+
+Like `pair`, with a full-width terminal area below. Its numbered tabs (3, 4, …) appear
+in the bottom bar, with the visible tab highlighted. Each tab is a separate Bridget
+console; hidden tabs keep running. When a tab exits, another takes its place. If `1`
+is already taken by an existing workspace, console names become `2-1`, `2-2`, and so on.
+
+**Switch consoles:** Click a visible pane or press `Alt+1`, `Alt+2`, `Alt+3`, and so on.
+`F1` opens help. Pane borders show the position, console title, and `ACTIVE`/`inactive`
+state; the bottom bar labels all available destinations. For terminal 10 and above,
+or as a fallback, press `Ctrl-Space`, the number, then `Tab`.
+
+| Key after `Ctrl-Space` | Action |
 |---|---|
-| `3 Enter` | letzte Ausgabe an Konsole 3 (einmalig, die Verbindung 1⇄2 bleibt) |
-| `3 B`, `3 A` | Bildschirm bzw. Auswahl an Konsole 3 |
-| `M` / `3 M` | mit der Maus markierten Text an den Partner bzw. an Konsole 3 |
-| `4 Tab` | Terminal 4 unten zeigen und hineinwechseln (`1 Tab`/`2 Tab`: nach oben) |
-| `Tab` | nächster Terminal-Tab |
-| `N` | neuer Terminal-Tab mit `$SHELL` |
-| `3 V` | fest mit Konsole 3 verbinden |
+| `3 Enter` | Send the last output to console 3 once, keeping the 1⇄2 connection |
+| `3 B`, `3 A` | Send the screen or selected lines to console 3 |
+| `M` / `3 M` | Send the mouse selection to the partner or console 3 |
+| `4 Tab` | Show and focus terminal 4 below (`1 Tab`/`2 Tab` switch to the top panes) |
+| `Tab` | Next terminal tab |
+| `N` | Open and focus a new terminal tab running `$SHELL` |
+| `3 V` | Connect to console 3 |
 
-Markieren: einfach mit der Maus ziehen (tmux-Markierung), dann `Ctrl-Space M`. Fängt das
-Programm im Pane die Maus selbst ab, markiert tmux nichts; Shift plus Ziehen bleibt für die
-Zwischenablage des Terminals. Die Nummer vor der Taste geht überall, auch außerhalb von
-`desk`: `Ctrl-Space 3 Enter` schickt an die Konsole mit dem Namen `3`.
+To select text, drag with the mouse (tmux selection), then press `Ctrl-Space M`. If the
+program inside the pane captures the mouse, tmux cannot select text; Shift-drag still
+uses the terminal's own selection. A number before the action key also works outside
+`desk`: `Ctrl-Space 3 Enter` sends to the console named `3`.
 
-## Brücke
+## Copy and paste
+
+Click the destination console, then use your terminal's paste shortcut, usually
+`Ctrl-Shift-V`. For the terminal's context menu, try `Shift` + right-click; an ordinary
+right-click may be captured by tmux or the program inside the pane. To copy text out,
+hold Shift while dragging to select it, then press `Ctrl-Shift-C`.
+
+## Bridge
 
 ```bash
-bridget A -- claude   # Konsole 1
-bridget B             # Konsole 2 ($SHELL)
-bridget B --connect A -- codex   # verbindet sich beim Start selbst mit A
+bridget A -- claude             # Console 1
+bridget B                       # Console 2 ($SHELL)
+bridget B --connect A -- codex   # Connect to A at startup
 ```
 
-**Markierung:** Der Hintergrund wird leicht eingefärbt. Die erste Konsole ist blau, die
-zweite grün usw., bei `duo` ist Seite A blau und B grün. Eine eigene Farbe gibt
-`--color blau|grün|lila|orange|rot|türkis|#rrggbb|aus` (oder `BRIDGET_COLOR`). Beim Ende
-wird die alte Farbe zurückgesetzt. Das braucht ein Terminal, das `OSC 11` beantwortet
-(gnome-terminal, xterm, konsole, VS Code); sonst bleibt alles wie es ist. Der Fenstertitel
-bekommt ein Kennzeichen: `[A]` bzw. verbunden `[A⇄B]`.
+**Console colors:** The background is lightly tinted: blue for the first console, green
+for the second, and so on. In `duo`, side A is blue and B is green. Choose a color with
+`--color blue|green|purple|orange|red|cyan|#rrggbb|off` (or `BRIDGET_COLOR`). The original
+color is restored on exit. This requires a terminal that responds to `OSC 11`
+(gnome-terminal, xterm, konsole, VS Code); otherwise the background stays unchanged.
+The window title gets a label: `[A]`, or `[A⇄B]` when connected.
 
-Shortcuts sind zweistufig: zuerst `Ctrl-Space` drücken und loslassen, danach die
-Aktionstaste. Dadurch geraten sie nicht mit den Programmen in den beiden Panes aneinander.
-Nach dem Präfix erscheint ein Aktionsmenü mit dem aktuellen Sendeziel. Eine Nummer
-ändert das Ziel, `Esc` schließt das Menü. Die bisherigen schnellen Tastenfolgen bleiben
-unverändert; Hilfe und Auswahl ersetzen das Menü bei Bedarf.
+Shortcuts take two steps: press and release `Ctrl-Space`, then press the action key.
+This keeps them separate from shortcuts used by the programs inside the panes.
+An action menu appears after the prefix and shows the current destination. Enter a
+number to change the destination, or `Esc` to close the menu. Fast key sequences also
+work; help and the line picker replace the menu when opened.
 
-Pair und Desk verwenden dezente Rahmen und eine türkise Hervorhebung der aktiven
-Konsole. Kurze Rückmeldungen erscheinen zusätzlich in der unteren Statusleiste.
-Beim Senden läuft dort einmal ein Punkt über die Brücke; `BRIDGET_ANIMATION=0`
-schaltet diese Animation ab. Sie verändert die Ausgabe der gestarteten Programme nicht.
+Pair and desk use subtle borders and a cyan highlight for the active console. Brief
+feedback also appears in the bottom status bar. Sending text moves a dot across the
+bridge once; set `BRIDGET_ANIMATION=0` to disable the animation. It does not change
+the output of the programs running inside the panes.
 
-| Taste nach `Ctrl-Space` | Wirkung |
+| Key after `Ctrl-Space` | Action |
 |---|---|
-| `Enter` | letzte Ausgabe senden (Shell: seit dem letzten Enter; claude/codex: letzte Antwort, auch über den Bildschirm hinaus) |
-| `A` | Auswahlmodus: Zeilen aus Verlauf markieren (`Space`), mit `Enter` senden |
-| `B` | sichtbaren Bildschirm senden |
-| `M` | mit der Maus markierten Text senden (nur in tmux) |
-| `V` | verbinden (bei mehreren Konsolen: Ziffer wählen) |
-| `T` | trennen |
-| `Ctrl-V` | zurückgehaltenen mehrzeiligen Text als eine Zeile einfügen |
-| `H` oder `?` | Hilfe als eigenes Fenster öffnen |
-| `Ctrl-Space` | echtes `Ctrl-Space` ans Programm senden |
+| `Enter` | Send the last output (shell: since the last Enter; Claude/Codex: the last response, including text beyond the screen) |
+| `A` | Select lines from scrollback with `Space`, then send with `Enter` |
+| `B` | Send the visible screen |
+| `M` | Send the mouse selection (tmux only) |
+| `V` | Connect (choose a number if several consoles are available) |
+| `T` | Disconnect |
+| `Ctrl-V` | Insert held multiline text as a single line |
+| `H` or `?` | Open the help overlay |
+| `Ctrl-Space` | Send a literal `Ctrl-Space` to the program |
 
-Eine Nummer vor der Taste wählt das Ziel: `Ctrl-Space 3 Enter` schickt einmalig an Konsole
-`3`, ohne die bestehende Verbindung zu ändern (siehe `desk`).
+A number before the action key selects the destination: `Ctrl-Space 3 Enter` sends once
+to console `3` without changing the existing connection (see `desk`).
 
-Das bisherige Präfix `Ctrl-]` und die Aktionstasten `L/P/S/C/D` funktionieren weiterhin.
+The original `Ctrl-]` prefix and `L/P/S/C/D` action keys still work.
 
-Gesendeter Text kommt **nie mit Enter** an. Mehrzeiliger Text wird nur per Bracketed Paste
-eingefügt. Kann das Zielprogramm das nicht, wird er zurückgehalten. Abhilfe für bash:
-`set enable-bracketed-paste on` in `~/.inputrc`; für vim 8.0 `t_BE`/`t_BD`/`t_PS`/`t_PE`
-in der `~/.vimrc`.
+Sending text **never presses Enter** in the receiving program. Multiline text is only
+inserted through bracketed paste. If the destination does not support it, the text is
+held back. For Bash, add `set enable-bracketed-paste on` to `~/.inputrc`; for Vim 8.0,
+configure `t_BE`/`t_BD`/`t_PS`/`t_PE` in `~/.vimrc`.
 
-Von außen: `bridget ls`, `bridget link A B`, `bridget unlink A`,
+External commands: `bridget ls`, `bridget link A B`, `bridget unlink A`,
 `bridget send A --last|--screen`, `bridget config [PROG] [--init]`.
 
-## Sitzung beenden
+## Exit a session
 
-Bridget reicht die Beenden-Befehle an das gestartete Programm weiter. Bei Codex im
-Eingabefeld **`/exit` oder `/quit`** eingeben und normal `Enter` drücken — ohne
-`Ctrl-Space` davor. Ein bloßes `exit` ohne Schrägstrich ist dort eine Chatnachricht.
-In einer Shell beendet dagegen `exit` die Shell. Sobald das gestartete Programm endet,
-beendet sich auch dessen Bridget-Wrapper und sichert den Sitzungsdump wie oben beschrieben.
+Bridget forwards exit commands to the program running inside it. In Codex, type
+**`/exit` or `/quit`** in the input field and press `Enter`, without a `Ctrl-Space`
+prefix. Plain `exit` without a slash is a chat message there. In a shell, `exit` ends
+the shell. Once the program ends, its Bridget wrapper also exits and saves the session
+dump as described above.
 
 ## duo
 
 ```bash
-bridget duo --a claude --b codex --rounds 6 "Prüft gemeinsam docs/plan.md"
-bridget duo join <ID>     # zweite Konsole: zeigt Seite B
+bridget duo --a claude --b codex --rounds 6 "Review docs/plan.md together"
+bridget duo join <ID>     # Second console: show side B
 ```
 
-`Space` Pause/weiter · `i` Nachricht einwerfen (in der Pause) · `u` Seite übernehmen
-(interaktive Sitzung, in der Pause) · `q` Ende.
+`Space` pauses/resumes · `i` injects a message while paused · `u` takes over one side
+in an interactive session while paused · `q` ends the conversation.
 
-Übernommenes codex läuft mit `--no-alt-screen` (inline), damit die Sitzung im Scrollback
-des Terminals bleibt und lange Antworten ganz lesbar und kopierbar sind.
+Codex takeovers use `--no-alt-screen` (inline), keeping the session in terminal scrollback
+so long responses remain readable and can be copied in full.
 
-Headless wird nur gelesen: claude mit `--restricted --tools Read Grep Glob
---strict-mcp-config`, codex mit Sandbox `read-only` und ohne User-Config/Regeln. codex darf
-dabei überall lesen, nicht nur im Arbeitsverzeichnis. Geändert wird nur bei einer Übernahme,
-im normalen Dialog der CLI. Mit `--transcript` wird nach `~/.local/state/bridget/`
-protokolliert (0600, nach 14 Tagen gelöscht).
+Headless runs are read-only: Claude uses `--restricted --tools Read Grep Glob
+--strict-mcp-config`; Codex uses the `read-only` sandbox without user configuration or
+rules. Codex can read beyond the working directory. Changes are possible only during
+an interactive takeover, through the CLI's normal conversation. Use `--transcript` to
+save a log in `~/.local/state/bridget/` (permissions `0600`, removed after 14 days).
 
-## Sicherheit
+## Security
 
-- Sockets nur in `$XDG_RUNTIME_DIR/bridget` (muss dir gehören, 0700, sonst Abbruch),
-  Gegenstelle per `SO_PEERCRED` geprüft, kein Netzwerk-Port.
-- Namen `[A-Za-z0-9_-]{1,32}`; Nachrichten ≤ 1 MiB, Texte ≤ 256 KiB.
-- Übertragener Text wird bereinigt: nur `\n` und `\t` bleiben, keine Escape-Sequenzen.
+- Sockets live in `$XDG_RUNTIME_DIR/bridget` (must be owned by you with permissions
+  `0700`, otherwise Bridget stops). Peers are verified with `SO_PEERCRED`; no network
+  port is opened.
+- Names match `[A-Za-z0-9_-]{1,32}`; messages are limited to 1 MiB and text to 256 KiB.
+- Shared text is sanitized: only `\n` and `\t` control characters are kept, with no
+  escape sequences.
