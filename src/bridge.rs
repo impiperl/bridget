@@ -258,6 +258,8 @@ impl Bridge {
                 None => desk::next(),
             }),
             b'n' => self.report(desk::new_tab(&self.name)),
+            b'+' => self.report(desk::resize_terminal(true)),
+            b'-' => self.report(desk::resize_terminal(false)),
             b'h' | b'?' => self.open_help(),
             CTRL_V => self.insert_pending_one_line(),
             _ => {

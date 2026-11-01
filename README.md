@@ -104,6 +104,10 @@ is already taken by an existing workspace, console names become `2-1`, `2-2`, an
 state; the bottom bar labels all available destinations. For terminal 10 and above,
 or as a fallback, press `Ctrl-Space`, the number, then `Tab`.
 
+**Resize the bottom terminal:** `Alt+↑` grows it upward by three lines; `Alt+↓`
+shrinks it. This works from any pane. Alternatively, use `Ctrl-Space +` / `Ctrl-Space -`.
+Switching terminal tabs keeps the current area size.
+
 | Key after `Ctrl-Space` | Action |
 |---|---|
 | `3 Enter` | Send the last output to console 3 once, keeping the 1⇄2 connection |

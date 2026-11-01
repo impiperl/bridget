@@ -87,11 +87,28 @@ fn desk_tabs_marking_and_cleanup() {
     let root_keys = t.run(&["list-keys", "-T", "root"]);
     assert!(root_keys.contains("M-1") && root_keys.contains("C-Space 1 Tab"), "{root_keys}");
 
+    // Größenänderung aus einer oberen Konsole betrifft den unteren Bereich.
+    let height = |pane: &str| {
+        t.run(&["display-message", "-p", "-t", pane, "#{pane_height}"]).parse::<u32>().unwrap()
+    };
+    let initial_height = height(&p3);
+    t.keys(&p1, &["C-Space", "+"]);
+    wait_until("Terminal wächst nach oben", || height(&p3) == initial_height + 3);
+
+    // Alt+Down aus dem echten Client verkleinert denselben Bereich wieder.
+    s.send(b"\x1b[1;3B");
+    wait_until("Alt+Down verkleinert Terminal", || height(&p3) == initial_height);
+    s.send(b"\x1b[1;3A");
+    wait_until("Alt+Up vergrößert Terminal", || height(&p3) == initial_height + 3);
+
     // Alt+4 aus dem echten Client: direkt zu Terminal 4, ohne Prefix-Folge.
     s.send(b"\x1b4");
     wait_until("Alt+4 schaltet direkt zu Tab 4", || t.bottom() == p4);
+    assert_eq!(height(&p4), initial_height + 3, "Größe bleibt beim Tabwechsel erhalten");
     s.send(b"\x1b3");
     wait_until("Alt+3 schaltet direkt zu Tab 3", || t.bottom() == p3);
+    t.keys(&p3, &["C-Space", "-"]);
+    wait_until("Minus verkleinert Terminal", || height(&p3) == initial_height);
 
     // Ctrl-] 4 Tab in Konsole 1: Tab 4 kommt nach unten.
     t.keys(&p1, &["C-]", "4", "Tab"]);

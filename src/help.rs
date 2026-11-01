@@ -48,6 +48,11 @@ pub fn render(name: &str, partner: Option<&str>, rows: u16, cols: u16) -> String
         )
         .into(),
         tr!("[N]      New terminal tab", "[N]      Neuer Terminal-Tab").into(),
+        tr!(
+            "[Alt+↑/↓] Grow/shrink bottom terminal (+/- after prefix)",
+            "[Alt+↑/↓] Terminal unten größer/kleiner (+/- nach Präfix)"
+        )
+        .into(),
         tr!("[F1]     Open help directly (desk)", "[F1]     Hilfe direkt öffnen (desk)").into(),
         String::new(),
         tr!("MORE", "WEITERES").into(),
@@ -104,6 +109,7 @@ pub fn actions(name: &str, target: Option<&str>, rows: u16, cols: u16) -> String
             "[Tab] Nächstes Terminal [N] Neues Terminal"
         )
         .into(),
+        tr!("[+] / [-] Resize bottom terminal", "[+] / [-] Terminal unten größer/kleiner").into(),
         String::new(),
         tr!(
             "Number first: choose destination, e.g. 3 Enter",

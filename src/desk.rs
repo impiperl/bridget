@@ -320,6 +320,20 @@ pub fn next() -> Result<String> {
     Ok(if crate::locale::german() { format!("Terminal {n}") } else { format!("terminal {n}") })
 }
 
+/// Den gemeinsamen unteren Terminal-Bereich vergrößern oder verkleinern.
+pub fn resize_terminal(grow: bool) -> Result<String> {
+    let (t, session) = here()?;
+    let pane = bottom(&t, &session)?
+        .context(tr!("no terminal area (Ctrl-Space N)", "kein Terminal-Bereich (Ctrl-Space N)"))?;
+    t.run(&["resize-pane", "-t", &pane, if grow { "-U" } else { "-D" }, "3"])?;
+    Ok(if grow {
+        tr!("terminal area enlarged", "Terminal-Bereich vergrößert")
+    } else {
+        tr!("terminal area reduced", "Terminal-Bereich verkleinert")
+    }
+    .into())
+}
+
 /// Neuen Terminal-Tab mit `$SHELL` anlegen und zeigen. `me` ist der Name der Konsole, die
 /// gefragt hat: Ihre Gruppe bestimmt die Namen.
 pub fn new_tab(me: &str) -> Result<String> {
@@ -528,6 +542,18 @@ fn bottom(t: &Tmux, session: &str) -> Result<Option<String>> {
 /// bridget-tmux-Server, prüfen aber die Sitzungsmarkierung: In `pair` und fremden
 /// Sitzungen gehen dieselben Tasten unverändert an das Programm.
 fn bind_direct_keys(t: &Tmux) -> Result<()> {
+    for (key, action) in [("M-Up", "+"), ("M-Down", "-")] {
+        t.run(&[
+            "bind-key",
+            "-n",
+            key,
+            "if-shell",
+            "-F",
+            &format!("#{{{DESK_OPTION}}}"),
+            &format!("send-keys C-Space {action}"),
+            &format!("send-keys {key}"),
+        ])?;
+    }
     for n in 1..=9 {
         let key = format!("M-{n}");
         let in_desk = format!("send-keys C-Space {n} Tab");
@@ -656,7 +682,10 @@ fn refresh_status(t: &Tmux, session: &str) -> Result<()> {
             " #[fg=colour81] [Alt+1 LINKS] [Alt+2 RECHTS] #[default]"
         ),
         list,
-        tr!("  [Ctrl-Space Actions] [F1 HELP] ", "  [Ctrl-Space Aktionen] [F1 HILFE] ")
+        tr!(
+            "  [Alt+↑/↓ SIZE] [Ctrl-Space Actions] [F1 HELP] ",
+            "  [Alt+↑/↓ GRÖSSE] [Ctrl-Space Aktionen] [F1 HILFE] "
+        )
     );
     t.run(&["set-option", "-t", session, "status-right", &keys]).map(drop)
 }
