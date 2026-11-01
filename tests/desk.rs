@@ -57,7 +57,11 @@ fn desk_tabs_marking_and_cleanup() {
     let mut s = Session::start_with_env(
         &dir,
         &["desk", "--here", "--tabs", "2", "sh -c 'exec cat'", "sh -c 'exec cat'"],
-        &[("BRIDGET_TMUX_SERVER", t.0.clone()), ("SHELL", "/bin/sh".into())],
+        &[
+            ("BRIDGET_TMUX_SERVER", t.0.clone()),
+            ("SHELL", "/bin/sh".into()),
+            ("XDG_STATE_HOME", dir.join("state").to_string_lossy().into_owned()),
+        ],
     );
     s.expect("\x1b]11;?");
     s.send(b"\x1b]11;rgb:0000/0000/0000\x1b\\\x1b[?62;22c");
@@ -116,5 +120,34 @@ fn desk_tabs_marking_and_cleanup() {
     // Fenster zu (Client weg) → Sitzung endet.
     s.child.kill().unwrap();
     wait_until("Sitzung nach dem Schließen beendet", || t.run(&["ls"]).is_empty());
+    wait_until("Alle alten Konsolen beendet", || {
+        let out = ctl(&dir, &["ls"]);
+        let ls = String::from_utf8_lossy(&out.stdout);
+        ls.lines().all(|line| line == "no bridget consoles" || line.contains("not responding"))
+    });
+
+    // Ohne Programme und --tabs dieselbe Konfiguration erneut starten.
+    let mut restored = Session::start_with_env(
+        &dir,
+        &["desk", "--here"],
+        &[
+            ("BRIDGET_TMUX_SERVER", t.0.clone()),
+            ("SHELL", "/bin/bash".into()),
+            ("XDG_STATE_HOME", dir.join("state").to_string_lossy().into_owned()),
+        ],
+    );
+    restored.expect("\x1b]11;?");
+    restored.send(b"\x1b]11;rgb:0000/0000/0000\x1b\\\x1b[?62;22c");
+    wait_until("Programme und zwei Terminal-Tabs wiederhergestellt", || {
+        let ls = String::from_utf8_lossy(&ctl(&dir, &["ls"]).stdout).into_owned();
+        ["1 ", "2 ", "3 ", "4 "].iter().all(|n| ls.lines().any(|l| l.starts_with(n)))
+    });
+    let p1 = t.env("BRIDGET_DESK_TAB_1");
+    t.keys(&p1, &["restored-cat", "Enter"]);
+    wait_until("Gespeichertes cat läuft statt der neuen Shell", || {
+        t.run(&["capture-pane", "-p", "-t", &p1]).matches("restored-cat").count() >= 2
+    });
+    restored.child.kill().unwrap();
+    wait_until("Wiederhergestellte Sitzung beendet", || t.run(&["ls"]).is_empty());
     let _ = t.run(&["kill-server"]);
 }

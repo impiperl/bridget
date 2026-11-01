@@ -82,13 +82,13 @@ enum Cmd {
     PairAttach { session: String, panes: Vec<String> },
     /// Workspace: consoles 1 and 2 on top (connected), numbered terminal tabs below (tmux)
     Desk {
-        /// Program top left, console 1 (default: $SHELL), e.g. claude
+        /// Program top left, console 1 (default: last launch, otherwise $SHELL)
         left: Option<String>,
-        /// Program top right, console 2 (default: $SHELL), e.g. codex
+        /// Program top right, console 2 (default: last launch, otherwise $SHELL)
         right: Option<String>,
         /// Number of terminal tabs at startup (3, 4, …)
-        #[arg(long, default_value_t = 1)]
-        tabs: u32,
+        #[arg(long, value_parser = clap::value_parser!(u32).range(1..=9))]
+        tabs: Option<u32>,
         /// Open in this console instead of a new window
         #[arg(long)]
         here: bool,
@@ -206,9 +206,9 @@ fn german_command(command: Command) -> Command {
         })
         .mut_subcommand("desk", |cmd| {
             cmd.about("Arbeitsplatz: Konsolen 1 und 2 oben (verbunden), nummerierte Terminal-Tabs unten")
-                .mut_arg("left", |arg| arg.help("Programm oben links, Konsole 1 (Standard: $SHELL)"))
-                .mut_arg("right", |arg| arg.help("Programm oben rechts, Konsole 2 (Standard: $SHELL)"))
-                .mut_arg("tabs", |arg| arg.help("Anzahl Terminal-Tabs zum Start (3, 4, …)"))
+                .mut_arg("left", |arg| arg.help("Programm oben links (Standard: letzter Start, sonst $SHELL)"))
+                .mut_arg("right", |arg| arg.help("Programm oben rechts (Standard: letzter Start, sonst $SHELL)"))
+                .mut_arg("tabs", |arg| arg.help("Anzahl Terminal-Tabs (Standard: letzter Start, sonst 1)"))
                 .mut_arg("here", |arg| arg.help("In dieser Konsole öffnen statt in einem neuen Fenster"))
         })
         .mut_subcommand("config", |cmd| {

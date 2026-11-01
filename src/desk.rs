@@ -15,6 +15,7 @@
 //! `Alt+1` … `Alt+9` direkt um; `F1` öffnet die Hilfe.
 
 use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use anyhow::{Context, Result, bail};
@@ -36,32 +37,114 @@ pub struct Options {
     pub left: Option<String>,
     pub right: Option<String>,
     /// Anzahl Terminal-Tabs zum Start (mindestens 1).
-    pub tabs: u32,
+    pub tabs: Option<u32>,
     pub here: bool,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct Launch {
+    left: Vec<String>,
+    right: Vec<String>,
+    shell: String,
+    tabs: u32,
+}
+
+fn launch_path() -> Result<PathBuf> {
+    let base = std::env::var_os("XDG_STATE_HOME")
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/state")))
+        .context("HOME / XDG_STATE_HOME")?;
+    Ok(base.join("bridget/desk.json"))
+}
+
+impl Launch {
+    fn load(path: &Path) -> Result<Option<Self>> {
+        match std::fs::read(path) {
+            Ok(data) => {
+                let launch: Self =
+                    serde_json::from_slice(&data).with_context(|| format!("{}", path.display()))?;
+                anyhow::ensure!(
+                    (1..=9).contains(&launch.tabs)
+                        && launch.left.first().is_some_and(|s| !s.is_empty())
+                        && launch.right.first().is_some_and(|s| !s.is_empty())
+                        && !launch.shell.is_empty(),
+                    "invalid desk settings: {}",
+                    path.display()
+                );
+                Ok(Some(launch))
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(e).with_context(|| format!("{}", path.display())),
+        }
+    }
+
+    fn save(&self, path: &Path) -> Result<()> {
+        use std::io::Write;
+        use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+        std::fs::DirBuilder::new().recursive(true).mode(0o700).create(path.parent().unwrap())?;
+        let temp = path.with_extension(format!("{}.tmp", std::process::id()));
+        let mut file =
+            std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&temp)?;
+        let result = (|| -> Result<()> {
+            file.write_all(&serde_json::to_vec_pretty(self)?)?;
+            file.sync_all()?;
+            std::fs::rename(&temp, path)?;
+            Ok(())
+        })();
+        if result.is_err() {
+            let _ = std::fs::remove_file(&temp);
+        }
+        result.with_context(|| format!("{}", path.display()))
+    }
+
+    fn resolve(opts: &Options, previous: Option<Self>, shell: String) -> Result<Self> {
+        let mut launch = previous.unwrap_or(Self {
+            left: vec![shell.clone()],
+            right: vec![shell.clone()],
+            shell,
+            tabs: 1,
+        });
+        if let Some(left) = &opts.left {
+            launch.left = pair::split(left)?;
+        }
+        if let Some(right) = &opts.right {
+            launch.right = pair::split(right)?;
+        }
+        if let Some(tabs) = opts.tabs {
+            launch.tabs = tabs;
+        }
+        Ok(launch)
+    }
 }
 
 pub fn run(opts: Options) -> Result<i32> {
     pair::tmux(&["-V"]).context(tr!("bridget desk requires tmux", "bridget desk braucht tmux"))?;
+    let path = launch_path()?;
+    let launch = Launch::resolve(
+        &opts,
+        Launch::load(&path)?,
+        std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into()),
+    )?;
     anyhow::ensure!(
-        (1..=9).contains(&opts.tabs),
+        (1..=9).contains(&launch.tabs),
         "{}",
         tr!("--tabs must be between 1 and 9", "--tabs muss zwischen 1 und 9 liegen")
     );
     let dir = runtime::dir()?;
-    let last = FIRST_TAB + opts.tabs - 1;
+    let last = FIRST_TAB + launch.tabs - 1;
     let (group, session) = free_group(&dir, last);
     let name = |n: u32| format!("{group}{n}");
 
-    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
-    let left = pair::split(opts.left.as_deref().unwrap_or(&shell))?;
-    let right = pair::split(opts.right.as_deref().unwrap_or(&shell))?;
+    let left = &launch.left;
+    let right = &launch.right;
     let exe = std::env::current_exe()?.to_string_lossy().into_owned();
     let cwd = std::env::current_dir()?.to_string_lossy().into_owned();
     let runtime_base = std::env::var("XDG_RUNTIME_DIR").unwrap_or_default();
     let cmd = |n: u32, connect: Option<&str>, program: &[String]| {
         pair::pane_command(&exe, &runtime_base, &name(n), connect, program)
     };
-    let shell = vec![shell];
+    let shell = vec![launch.shell.clone()];
 
     let (rows, cols) = if opts.here { crate::terminal::size() } else { pair::WINDOW };
     let p1 = pair::tmux(&[
@@ -159,6 +242,7 @@ pub fn run(opts: Options) -> Result<i32> {
         ])?;
         t.run(&["select-pane", "-t", &p1])?;
         refresh_status(&t, &session)?;
+        launch.save(&path)?;
         Ok(p2)
     })();
     let p2 = match setup {
@@ -580,6 +664,28 @@ fn refresh_status(t: &Tmux, session: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn launch_defaults_and_partial_overrides() {
+        let mut opts = Options { left: None, right: None, tabs: None, here: false };
+        let first = Launch::resolve(&opts, None, "/bin/sh".into()).unwrap();
+        assert_eq!(first.left, ["/bin/sh"]);
+        assert_eq!(first.right, ["/bin/sh"]);
+        assert_eq!(first.tabs, 1);
+        opts.left = Some("claude --resume 'a b'".into());
+        opts.tabs = Some(3);
+        let changed = Launch::resolve(&opts, Some(first), "/bin/bash".into()).unwrap();
+        assert_eq!(changed.left, ["claude", "--resume", "a b"]);
+        assert_eq!(changed.right, ["/bin/sh"]);
+        assert_eq!(changed.tabs, 3);
+        opts.left = None;
+        opts.right = Some("codex".into());
+        opts.tabs = None;
+        let changed = Launch::resolve(&opts, Some(changed), "/bin/bash".into()).unwrap();
+        assert_eq!(changed.left, ["claude", "--resume", "a b"]);
+        assert_eq!(changed.right, ["codex"]);
+        assert_eq!(changed.tabs, 3);
+    }
 
     #[test]
     fn group_comes_from_trailing_number_after_dash() {

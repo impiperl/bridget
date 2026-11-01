@@ -4,7 +4,8 @@
 //! überschreiben oder neue hinzufügen (gleiches Format). Ein Profil mit `versions` gilt nur
 //! für diese Versionen; bei anderer Version fällt `Ctrl-] l` auf den sichtbaren Bildschirm
 //! zurück, weil sich die Oberfläche geändert haben kann. `args` werden beim Start direkt
-//! hinter den Programmnamen gesetzt, sofern sie noch fehlen.
+//! hinter den Programmnamen gesetzt, sofern sie noch fehlen. `exit` wird getippt, wenn das
+//! Fenster zugeht (siehe `crate::wrapper`).
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -27,6 +28,7 @@ versions = ["2.1.*"]
 last = "screen-diff"
 input_box = true
 prompt = '^❯ '
+exit = "/exit"
 strip = ['^\s*✻ ', '/effort\s*$', '^\s*⏵⏵', '^\s*[✢✳✶✻✽·*] \S.*…']
 trim_prefix = '^(\s*)● '
 
@@ -36,6 +38,7 @@ match = ["codex"]
 args = ["--no-alt-screen"]
 last = "screen-diff"
 prompt = '^›( |$)'
+exit = "/exit"
 strip = ['^\s*Worked for \d', '^\s*• (Working|Starting MCP servers) \(', '\? for shortcuts\s*$']
 trim_prefix = '^• '
 "#;
@@ -67,6 +70,7 @@ struct RawProfile {
     #[serde(default)]
     strip: Vec<String>,
     trim_prefix: Option<String>,
+    exit: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -86,6 +90,8 @@ pub struct Profile {
     pub version: Option<String>,
     /// Version passt nicht zum Profil: Rückfall auf `Screen`.
     pub version_mismatch: bool,
+    /// Befehl zum ordentlichen Beenden, wenn das Fenster zugeht (ohne Enter).
+    pub exit: Option<String>,
 }
 
 impl Profile {
@@ -209,6 +215,7 @@ fn select_from(
         args: raw.args.clone(),
         version,
         version_mismatch,
+        exit: raw.exit.clone(),
     })
 }
 
@@ -275,6 +282,9 @@ pub fn show_config(program: Option<&str>, init: bool) -> Result<()> {
         }
         for re in &p.frame.strip {
             println!("  {}: {re}", tr!("Frame rule", "Rahmen-Regel"));
+        }
+        if let Some(exit) = &p.exit {
+            println!("  {}: {exit}", tr!("Exit command", "Beenden mit"));
         }
     }
     Ok(())

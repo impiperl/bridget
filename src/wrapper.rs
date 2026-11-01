@@ -4,14 +4,23 @@
 //! - Tastatur → Hotkey-Filter → PTY (Hotkeys gehen an die Brücke)
 //! - PTY → Bildschirm, parallel ins vt100-Abbild und in den Mitschnitt seit dem letzten Enter
 //!
-//! Signale: SIGWINCH passt PTY und Abbild an, SIGTERM/SIGHUP gehen ans Programm.
+//! Signale: SIGWINCH passt PTY und Abbild an, SIGTERM/SIGHUP beenden das Programm.
 //! Vorher wird die letzte Ausgabe für den Abschluss-Dump (`crate::dump`) gesichert: Nach dem
 //! Signal räumt das Programm den Bildschirm womöglich noch um.
+//!
+//! Beenden geht ordentlich, wenn das Programm gerade an seiner Eingabe steht: bridget leert
+//! die Zeile und tippt den Befehl des Profils (`/exit`, bei einer interaktiven Shell `exit`).
+//! Erst wenn das Programm danach nicht in `EXIT_WAIT` endet, bekommt es das Signal; ein
+//! zweites Signal geht sofort durch. Steht es nicht an der Eingabe (Dialog offen, versteckter
+//! Cursor, in der Shell läuft ein Vordergrundprogramm), geht das Signal gleich weiter, damit
+//! der Text nirgends hineingetippt wird, wo er etwas auslöst.
 
 use std::io::Read;
 use std::mem::ManuallyDrop;
 use std::num::NonZeroU16;
 use std::os::fd::FromRawFd;
+use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 use std::time::{Duration, SystemTime};
@@ -30,6 +39,10 @@ use crate::terminal::{self, RawGuard};
 use crate::text;
 
 pub const SCROLLBACK: usize = 10_000;
+/// So lange darf ein Programm nach dem getippten Beenden-Befehl brauchen.
+const EXIT_WAIT: Duration = Duration::from_secs(10);
+/// Shells, die beim Schließen `exit` bekommen, sofern sie interaktiv laufen.
+const SHELLS: &[&str] = &["sh", "bash", "zsh", "fish", "dash", "ksh", "mksh", "tcsh", "csh"];
 
 pub struct Options {
     pub name: String,
@@ -76,6 +89,8 @@ pub fn run(opts: Options) -> Result<i32> {
     }
     let started = SystemTime::now();
     let kind = opts.profile.name.clone();
+    let exit_cmd = exit_command(opts.profile.exit.as_deref(), &opts.program);
+    let prompt = opts.profile.frame.prompt.clone();
     cmd.env("BRIDGET_NAME", &opts.name);
 
     let mut child = pair.slave.spawn_command(cmd).with_context(|| {
@@ -120,12 +135,15 @@ pub fn run(opts: Options) -> Result<i32> {
         let bridge = Arc::clone(&bridge);
         thread::spawn(move || {
             let mut buf = [0u8; 16 * 1024];
+            // Ist das Terminal weg (Fenster zu), weiterlesen: Sonst bleibt das Programm beim
+            // Schreiben hängen und kann sich nicht mehr selbst beenden.
+            let mut to_terminal = true;
             loop {
                 match pty_reader.read(&mut buf) {
                     Ok(0) | Err(_) => break,
                     Ok(n) => {
-                        if !bridge.output_to_terminal(&buf[..n]) {
-                            break;
+                        if to_terminal && !bridge.output_to_terminal(&buf[..n]) {
+                            to_terminal = false;
                         }
                         bridge.screen.lock().unwrap().process(&buf[..n]);
                         bridge.on_output(&buf[..n]);
@@ -184,7 +202,12 @@ pub fn run(opts: Options) -> Result<i32> {
 
     // Signale
     let at_signal: Arc<Mutex<Option<(String, String)>>> = Arc::new(Mutex::new(None));
+    // Wie es nach dem Signal ausging, für den Dump.
+    let ending: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+    let exited = Arc::new(AtomicBool::new(false));
     {
+        let ending = Arc::clone(&ending);
+        let exited = Arc::clone(&exited);
         let master = Arc::clone(&master);
         let screen = Arc::clone(&screen);
         let bridge = Arc::clone(&bridge);
@@ -199,7 +222,8 @@ pub fn run(opts: Options) -> Result<i32> {
                     }
                     _ => {
                         let mut saved = at_signal.lock().unwrap();
-                        if saved.is_none() {
+                        let first = saved.is_none();
+                        if first {
                             let why = if sig == SIGHUP {
                                 "Fenster geschlossen (SIGHUP)"
                             } else {
@@ -208,9 +232,39 @@ pub fn run(opts: Options) -> Result<i32> {
                             *saved = Some((why.to_string(), bridge.dump_text()));
                         }
                         drop(saved);
-                        if let Some(pid) = child_pid {
+                        let Some(pid) = child_pid else { continue };
+                        let ready = || {
+                            let fg = master.lock().unwrap().process_group_leader();
+                            fg == Some(pid as libc::pid_t)
+                                && at_prompt(
+                                    bridge.screen.lock().unwrap().screen(),
+                                    prompt.as_ref(),
+                                )
+                        };
+                        match exit_cmd.clone() {
+                            Some(cmd) if first && ready() => {
+                                *ending.lock().unwrap() = Some(format!("mit `{cmd}` beendet"));
+                                let bridge = Arc::clone(&bridge);
+                                let ending = Arc::clone(&ending);
+                                let exited = Arc::clone(&exited);
+                                thread::spawn(move || {
+                                    type_exit(&bridge, &cmd);
+                                    let wait = exit_wait();
+                                    thread::sleep(wait);
+                                    if !exited.load(Ordering::SeqCst) {
+                                        *ending.lock().unwrap() = Some(format!(
+                                            "`{cmd}` ohne Wirkung, nach {} s Signal",
+                                            wait.as_secs()
+                                        ));
+                                        // SAFETY: kill sendet nur ein Signal an den Kindprozess.
+                                        unsafe { libc::kill(pid as libc::pid_t, sig) };
+                                    }
+                                });
+                            }
                             // SAFETY: kill sendet nur ein Signal an den Kindprozess.
-                            unsafe { libc::kill(pid as libc::pid_t, sig) };
+                            _ => unsafe {
+                                libc::kill(pid as libc::pid_t, sig);
+                            },
                         }
                     }
                 }
@@ -219,6 +273,7 @@ pub fn run(opts: Options) -> Result<i32> {
     }
 
     let status = child.wait().context(tr!("wait for program", "auf das Programm warten"));
+    exited.store(true, Ordering::SeqCst);
     let partner = bridge.partner_name();
     let saved = at_signal.lock().unwrap().take();
     let last = match &saved {
@@ -243,14 +298,61 @@ pub fn run(opts: Options) -> Result<i32> {
             kind: &kind,
             cwd,
             started,
-            reason: saved
-                .map(|(why, _)| why)
-                .unwrap_or_else(|| format!("Programm beendet (Exit {code})")),
+            reason: match (saved, ending.lock().unwrap().take()) {
+                (Some((why, _)), Some(how)) => format!("{why}, {how}"),
+                (Some((why, _)), None) => why,
+                (None, _) => format!("Programm beendet (Exit {code})"),
+            },
             partner,
             last,
         });
     }
     Ok(code)
+}
+
+/// Befehl zum ordentlichen Beenden: aus dem Profil, sonst `exit` für eine interaktive Shell
+/// (keine Skriptdatei, kein `-c`).
+fn exit_command(from_profile: Option<&str>, program: &[String]) -> Option<String> {
+    if let Some(cmd) = from_profile {
+        return Some(cmd.to_string());
+    }
+    let base = Path::new(&program[0]).file_name()?.to_str()?;
+    let interactive = program[1..]
+        .iter()
+        .all(|a| a.starts_with("--") || (a.starts_with('-') && !a.contains('c')));
+    (SHELLS.contains(&base) && interactive).then(|| "exit".to_string())
+}
+
+/// Das Programm wartet auf Eingabe: Cursor sichtbar und, wenn das Profil die Eingabezeile
+/// kennt, in einer solchen Zeile. Ein Dialog (z.B. das Update-Angebot von codex) versteckt
+/// den Cursor; dort würde Enter eine Auswahl bestätigen. claude setzt hinter `❯` ein
+/// geschütztes Leerzeichen, das hier als normales zählt.
+fn at_prompt(screen: &vt100::Screen, prompt: Option<&regex::Regex>) -> bool {
+    if screen.hide_cursor() {
+        return false;
+    }
+    let Some(re) = prompt else { return true };
+    let row = usize::from(screen.cursor_position().0);
+    text::screen_rows(screen).get(row).is_some_and(|line| re.is_match(&line.replace('\u{a0}', " ")))
+}
+
+/// Zeile leeren (Ctrl-E, Ctrl-U), Befehl tippen, Enter. Mit Pausen, damit eine Oberfläche
+/// das nicht als Einfügen liest, bei dem Enter nur ein Zeilenumbruch wäre.
+fn type_exit(bridge: &Bridge, cmd: &str) {
+    for (bytes, pause) in [(&b"\x05\x15"[..], 150), (cmd.as_bytes(), 300), (b"\r", 0)] {
+        if !bridge.write_to_program(bytes) {
+            return;
+        }
+        thread::sleep(Duration::from_millis(pause));
+    }
+}
+
+/// `EXIT_WAIT`, für Tests über `BRIDGET_EXIT_WAIT` (Sekunden) verkürzbar.
+fn exit_wait() -> Duration {
+    std::env::var("BRIDGET_EXIT_WAIT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .map_or(EXIT_WAIT, Duration::from_secs)
 }
 
 /// Wie die Shell: Abbruch durch Signal N ergibt 128+N.
@@ -277,4 +379,43 @@ fn pty_size(rows: u16, cols: u16) -> PtySize {
 
 fn nz(v: u16) -> NonZeroU16 {
     NonZeroU16::new(v).unwrap_or(NonZeroU16::MIN)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn prog(args: &[&str]) -> Vec<String> {
+        args.iter().map(|a| a.to_string()).collect()
+    }
+
+    #[test]
+    fn only_interactive_shells_get_exit() {
+        assert_eq!(exit_command(None, &prog(&["/bin/bash"])).as_deref(), Some("exit"));
+        assert_eq!(exit_command(None, &prog(&["zsh", "-l", "--login"])).as_deref(), Some("exit"));
+        assert_eq!(exit_command(None, &prog(&["sh", "-c", "sleep 9"])), None);
+        assert_eq!(exit_command(None, &prog(&["bash", "-lc", "x"])), None);
+        assert_eq!(exit_command(None, &prog(&["bash", "skript.sh"])), None);
+        assert_eq!(exit_command(None, &prog(&["vim"])), None);
+        assert_eq!(exit_command(Some("/exit"), &prog(&["claude"])).as_deref(), Some("/exit"));
+    }
+
+    #[test]
+    fn prompt_needs_visible_cursor_on_input_line() {
+        let re = regex::Regex::new("^› ").unwrap();
+        let mut p = text::parser(nz(5), nz(40), 0);
+        p.process(b"Ausgabe\r\n\xe2\x80\xba Eingabe");
+        assert!(at_prompt(p.screen(), Some(&re)));
+        assert!(at_prompt(p.screen(), None));
+        let claude = regex::Regex::new("^❯ ").unwrap();
+        let mut c = text::parser(nz(5), nz(40), 0);
+        c.process("❯\u{a0}angefangen".as_bytes());
+        assert!(at_prompt(c.screen(), Some(&claude)));
+        // Dialog: Cursor versteckt.
+        p.process(b"\x1b[?25l");
+        assert!(!at_prompt(p.screen(), Some(&re)));
+        // Cursor sichtbar, aber nicht in der Eingabezeile.
+        p.process(b"\x1b[?25h\x1b[1;1H");
+        assert!(!at_prompt(p.screen(), Some(&re)));
+    }
 }

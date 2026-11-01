@@ -110,6 +110,45 @@ fn hangup_writes_dump_with_last_output() {
 }
 
 #[test]
+fn hangup_ends_idle_shell_with_exit() {
+    let dir = runtime_dir();
+    let mem = dir.join("mem");
+    std::fs::create_dir(&mem).unwrap();
+    let env = [
+        ("BRIDGET_MEMORY", mem.display().to_string()),
+        ("BRIDGET_EXIT_WAIT", "5".into()),
+        ("PS1", "bereit> ".into()),
+        ("ENV", "".into()),
+    ];
+    let mut s = Session::start_with_env(&dir, &["T", "--", "sh"], &env);
+    s.expect("bereit>");
+    s.send(b"angefangen");
+    s.expect("angefangen");
+    let pid = s.child.process_id().unwrap() as libc::pid_t;
+    unsafe { libc::kill(pid, libc::SIGHUP) };
+    // Die angefangene Zeile wird geleert, dann `exit`: Die Shell endet selbst mit 0.
+    assert_eq!(s.wait().exit_code(), 0);
+    let text = dumps(&mem);
+    assert!(text.contains("Fenster geschlossen (SIGHUP), mit `exit` beendet"), "{text}");
+}
+
+#[test]
+fn hangup_signals_shell_busy_with_foreground_program() {
+    let dir = runtime_dir();
+    let env = [("PS1", "bereit> ".into()), ("ENV", "".into())];
+    let mut s = Session::start_with_env(&dir, &["T", "--", "sh"], &env);
+    s.expect("bereit>");
+    s.send(b"sleep 30\r");
+    thread::sleep(Duration::from_millis(500));
+    let pid = s.child.process_id().unwrap() as libc::pid_t;
+    let start = std::time::Instant::now();
+    unsafe { libc::kill(pid, libc::SIGHUP) };
+    // Kein `exit` in `sleep` getippt und nicht auf EXIT_WAIT gewartet.
+    assert_eq!(s.wait().exit_code(), 128 + libc::SIGHUP as u32);
+    assert!(start.elapsed() < Duration::from_secs(5));
+}
+
+#[test]
 fn normal_exit_writes_dump_unless_disabled() {
     let dir = runtime_dir();
     let mem = dir.join("mem");

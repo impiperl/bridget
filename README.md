@@ -83,8 +83,16 @@ programs. The bottom bar shows the main pair shortcuts. The terminal is selected
 ```bash
 bridget desk claude codex          # Top: 1 = Claude, 2 = Codex (connected); bottom: terminal 3
 bridget desk claude codex --tabs 3  # Bottom terminals: 3, 4, 5
+bridget desk                       # Repeat the last programs and terminal count
 bridget desk --here                # In this terminal
 ```
+
+Desk remembers the last launch in `$XDG_STATE_HOME/bridget/desk.json` (default:
+`~/.local/state/bridget/desk.json`). Omitted programs and `--tabs` reuse those values;
+the first launch defaults to `$SHELL` and one terminal. Commands include their arguments.
+Each launch uses the current directory; `--here` applies only to that invocation.
+This starts the programs again; chat sessions are resumed only if the saved command
+itself includes a resume option.
 
 Like `pair`, with a full-width terminal area below. Its numbered tabs (3, 4, …) appear
 in the bottom bar, with the visible tab highlighted. Each tab is a separate Bridget
@@ -176,6 +184,15 @@ Bridget forwards exit commands to the program running inside it. In Codex, type
 prefix. Plain `exit` without a slash is a chat message there. In a shell, `exit` ends
 the shell. Once the program ends, its Bridget wrapper also exits and saves the session
 dump as described above.
+
+Closing a `desk` or `pair` window (or any `SIGHUP`/`SIGTERM`) ends each console the same
+way: if the program is waiting at its input line, Bridget clears the line and types the
+profile's exit command (`/exit` for Claude and Codex, `exit` for an interactive shell).
+Only if the program has not ended after 10 seconds does it get the signal; a second
+signal goes through at once. If the program is not at its input (a dialog is open, the
+cursor is hidden, or a shell is running a foreground program), the signal is forwarded
+immediately so the text never lands where it could trigger something. Set `exit = "…"`
+in a profile in `~/.config/bridget/config.toml` to change the command.
 
 ## duo
 
