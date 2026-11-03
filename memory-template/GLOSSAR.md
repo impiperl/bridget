@@ -1,7 +1,7 @@
 ---
 typ: spezifikation
 titel: Bridget memory glossary and format
-stand: 2026-10-31
+stand: 2026-11-02
 ---
 
 # Bridget memory glossary
@@ -19,8 +19,9 @@ for compatibility. The instructions and entry contents can be written in English
 2. Read everything in `regeln/`. These rules always apply.
 3. Read handoffs in `uebergaben/` with `status: offen` that belong to the current
    project (`projekt:`) or to all projects (`alle`).
-4. Read `wissen/` as needed, using the summaries in `INDEX.md` or searching by `tags:`.
-5. Skim `NOTIZEN.md` as needed: informal notes from other sessions, without guarantees.
+4. Read the "## Post" section of `NOTIZEN.md`: messages from the other assistant. Handle
+   what is addressed to you, then delete that line. Read the rest of the scratchpad as needed.
+5. Read `wissen/` as needed, using the summaries in `INDEX.md` or searching by `tags:`.
 6. When continuing earlier work, read the newest files in `sitzungen/` for the same
    working directory (filenames begin with a date and time, newest last).
 
@@ -32,10 +33,10 @@ Do not load everything at once. Use the index to decide what is relevant.
 |---|---|---|
 | `regeln/` | Binding human instructions: what to do or avoid | Permanent; only the human revokes them |
 | `wissen/` | Facts not already available in code or Git: decisions, context, paths, quirks | Persistent; update when facts change |
-| `uebergaben/` | Handoffs: current state, open work, next steps | Until complete, then move to `archiv/` |
+| `uebergaben/` | Handoffs: current state, open work, next steps. Rewritten when work continues, not appended to | Until complete, then move to `archiv/` |
 | `archiv/` | Completed or obsolete entries | Not read at session startup |
 | `sitzungen/` | Dumps written automatically by Bridget when a window closes or on `/compact` and `/clear` in Claude or Codex | Bridget removes them after 14 days; assistants may delete them |
-| `NOTIZEN.md` | Shared scratchpad: temporary notes, reminders, ideas | Assistants may write, edit, or delete freely |
+| `NOTIZEN.md` | Shared scratchpad: temporary notes, reminders, ideas; "## Post" at the top for messages to the other assistant | Assistants may write, edit, or delete freely; the recipient deletes Post lines once handled |
 
 ## 3. Terms
 
@@ -45,7 +46,8 @@ Do not load everything at once. Use the index to decide what is relevant.
 | **Front matter** | The required YAML block between `---` markers at the start of an entry. |
 | **Index** | `INDEX.md`, one line per entry. Update it whenever entries change. |
 | **Rule** | A human instruction. Takes precedence over the assistant's judgment, but not over an explicit instruction in the current session. |
-| **Handoff** | A note for the next session: goal, state, open work, and next steps. |
+| **Handoff** | A note for the next session: goal, state, open work, and next steps. Always describes the state now, not the history. |
+| **Post** | The "## Post" section at the top of `NOTIZEN.md`: messages from one assistant to the other, one line each (`YYYY-MM-DD claude → codex: …`). Read at startup and deleted by the recipient once handled. |
 | **Source** | Who wrote the entry: `mensch` (human), `claude`, or `codex`. |
 | **Project** | Short workspace name (for example, `bridget`) or `alle` (all projects). |
 | **Dump** | A Bridget-generated file in `sitzungen/`: program, working directory, event, resume command, and last exchange or output; Claude compaction dumps also include the summary (shortened to request, pending tasks, current work and next step). Consoles without a single prompt and empty `/clear` get no dump. Raw data, not verified facts. |
@@ -87,12 +89,27 @@ For handoffs, use these sections instead of **Why/Apply**:
 ## Caution            # optional: what should not be touched
 ```
 
+A handoff is **rewritten, not extended**. Whoever continues the work replaces `Current state`,
+`Open work` and `Next step` with the state now and updates `stand:`; do not append dated
+sections such as "## 2026-11-01 (codex): …".
+- **Current state:** what is finished now and where it lives, in a few points. Not how it got
+  there.
+- **Open work:** only what is actually still missing (for example SQL not applied, not
+  deployed, not tested on a device). Remove items that are done.
+- Leave out build hashes, exec session numbers, test copies in `/tmp`, test counts, and
+  details already in the code, README or wiki (link to them instead).
+- Anything that matters beyond the task (pitfalls, decisions) goes to `wissen/`.
+- Aim for at most about 60 lines. Whoever next touches a longer handoff condenses it first and
+  keeps the old version as `archiv/YYYY-MM-DD-topic-verlauf.md`.
+- A new task gets its own handoff, even in the same project.
+
 ## 5. Writing rules
 
 These apply to `regeln/`, `wissen/`, and `uebergaben/`. **Exception: `NOTIZEN.md`.**
 Any assistant may write, edit, or delete notes there without asking; only the
 "no secrets" rule still applies. Use one line per note: `YYYY-MM-DD source: …`.
 Move anything of lasting importance into `wissen/` and remove it from the scratchpad.
+Messages to the other assistant belong only under "## Post", not among the other notes.
 
 **Only Bridget writes `sitzungen/`.** Assistants must not edit dumps, but may delete
 ones that are no longer needed. Dumps may contain screen content with secrets:

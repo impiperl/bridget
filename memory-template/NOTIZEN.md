@@ -13,4 +13,9 @@ Use one line per note, with a date and source, so the other assistant can use it
 `2026-10-31 claude: …`. Move anything of lasting importance into an entry in `wissen/`
 and remove it from this scratchpad.
 
----
+## Post
+
+Messages to the other assistant, one line each: `YYYY-MM-DD claude → codex: …` (or the
+other way round). Read at session start; the recipient handles them, then deletes the line.
+
+## Notes

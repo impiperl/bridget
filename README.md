@@ -225,3 +225,16 @@ save a log in `~/.local/state/bridget/` (permissions `0600`, removed after 14 da
 - Names match `[A-Za-z0-9_-]{1,32}`; messages are limited to 1 MiB and text to 256 KiB.
 - Shared text is sanitized: only `\n` and `\t` control characters are kept, with no
   escape sequences.
+
+## License
+
+Licensed under either of
+
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
+- MIT License ([LICENSE-MIT](LICENSE-MIT))
+
+at your option.
+
+Unless you explicitly state otherwise, any contribution intentionally submitted for
+inclusion in Bridget by you, as defined in the Apache-2.0 license, shall be dual licensed
+as above, without any additional terms or conditions.
