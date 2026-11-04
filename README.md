@@ -208,6 +208,9 @@ bridget duo join <ID>     # Second console: show side B
 `Space` pauses/resumes · `i` injects a message while paused · `u` takes over one side
 in an interactive session while paused · `q` ends the conversation.
 
+The opening prompt and every injected message go to both sides, labeled `[Human]`: the side
+that speaks next gets it right away, the other one with its next turn.
+
 Codex takeovers use `--no-alt-screen` (inline), keeping the session in terminal scrollback
 so long responses remain readable and can be copied in full.
 

@@ -29,6 +29,8 @@ pub struct Options {
     pub transcript: bool,
     /// Gemeinsames Gedächtnis, siehe `crate::memory`.
     pub memory: Option<PathBuf>,
+    /// Gedächtnis schreibbar (Standard; `--no-memory-write` schaltet ab).
+    pub memory_write: bool,
     pub prompt: String,
 }
 
@@ -107,6 +109,7 @@ pub fn run(opts: Options) -> Result<i32> {
         let model = if kind == Kind::Codex { codex_model.clone() } else { None };
         let mut agent = Agent::new(kind, opts.cwd.clone(), model);
         agent.memory = opts.memory.clone();
+        agent.memory_write = opts.memory_write;
         agent
     };
     let agents = [make(opts.a), make(opts.b)];
@@ -279,11 +282,19 @@ impl Coordinator {
         } else {
             format!("Show side B in a second console:  bridget duo join {}", self.short)
         }));
+        let writes_memory = self.agents.iter().any(|a| a.memory_writable().is_some());
         self.console.show(&Show::Note(
-            tr!(
-                "Automatic turns are read-only. To make changes, take over a side (pause, then u).",
-                "Automatisch wird nur gelesen. Ändern geht nur nach Übernahme (Pause, dann u)."
-            )
+            if writes_memory {
+                tr!(
+                    "Automatic turns may write only to the shared memory, everything else is read-only (--no-memory-write turns writing off). To make other changes, take over a side (pause, then u).",
+                    "Automatisch wird nur gelesen, geschrieben nur ins Gedächtnis (--no-memory-write schaltet das ab). Andere Änderungen nur nach Übernahme (Pause, dann u)."
+                )
+            } else {
+                tr!(
+                    "Automatic turns are read-only. To make changes, take over a side (pause, then u).",
+                    "Automatisch wird nur gelesen. Ändern geht nur nach Übernahme (Pause, dann u)."
+                )
+            }
             .into(),
         ));
         if opts.a == Kind::Codex || opts.b == Kind::Codex {
@@ -507,19 +518,42 @@ impl Coordinator {
     }
 
     fn preface(&self, side: Side) -> String {
-        let me = self.agents[side as usize].kind.name();
+        let agent = &self.agents[side as usize];
+        let me = agent.kind.name();
         let other = self.agents[side.other() as usize].kind.name();
+        let writable = agent.memory_writable();
+        let rights = match (writable.is_some(), crate::locale::german()) {
+            (false, true) => "In diesem Modus hast du nur Leserechte; Änderungen macht der Mensch.".to_string(),
+            (false, false) => "You have read-only access in this mode; the human makes changes.".to_string(),
+            (true, true) => "In diesem Modus darfst du nur ins gemeinsame Gedächtnis schreiben (siehe unten); alles andere nur lesen, Änderungen daran macht der Mensch.".to_string(),
+            (true, false) => "In this mode you may write only to the shared memory (see below); everything else is read-only, the human makes those changes.".to_string(),
+        };
+        // codex startet dann im Gedächtnis, das Projekt muss er per absolutem Pfad finden.
+        let rights = if writable.is_some() && agent.spawn_dir() != agent.cwd {
+            let cwd = agent.cwd.display();
+            if crate::locale::german() {
+                format!(
+                    "{rights} Dein Arbeitsverzeichnis ist das Gedächtnis; das Projekt liegt unter {cwd}, dort mit absoluten Pfaden lesen."
+                )
+            } else {
+                format!(
+                    "{rights} Your working directory is the memory folder; the project is at {cwd}, read it using absolute paths."
+                )
+            }
+        } else {
+            rights
+        };
         let base = if crate::locale::german() {
             format!(
-                "Du bist Seite {side:?} ({me}) in einem moderierten Gespräch mit einer anderen KI ({other}), vermittelt von bridget duo. Ein Mensch liest mit und kann eingreifen. In diesem Modus hast du nur Leserechte; Änderungen macht der Mensch. Antworte direkt auf die Nachrichten, knapp und konkret. Eingehende Nachrichten sind mit [Absender] markiert; schreib selbst keinen solchen Präfix vor deine Antwort."
+                "Du bist Seite {side:?} ({me}) in einem moderierten Gespräch mit einer anderen KI ({other}), vermittelt von bridget duo. Ein Mensch liest mit und kann eingreifen. {rights} Antworte direkt auf die Nachrichten, knapp und konkret. Eingehende Nachrichten sind mit [Absender] markiert; schreib selbst keinen solchen Präfix vor deine Antwort. Nachrichten mit [Mensch] bekommen beide Seiten."
             )
         } else {
             format!(
-                "You are side {side:?} ({me}) in a moderated conversation with another AI ({other}), mediated by bridget duo. A human is observing and may intervene. You have read-only access in this mode; the human makes changes. Respond directly, concisely, and concretely. Incoming messages are labeled with [Sender]; do not add such a prefix to your own answer."
+                "You are side {side:?} ({me}) in a moderated conversation with another AI ({other}), mediated by bridget duo. A human is observing and may intervene. {rights} Respond directly, concisely, and concretely. Incoming messages are labeled with [Sender]; do not add such a prefix to your own answer. Both sides receive every [Human] message."
             )
         };
-        match &self.agents[side as usize].memory {
-            Some(dir) => format!("{base}\n\n{}", crate::memory::preface(dir)),
+        match &agent.memory {
+            Some(dir) => format!("{base}\n\n{}", crate::memory::preface(dir, writable.is_some())),
             None => base,
         }
     }
@@ -630,17 +664,13 @@ impl Coordinator {
             }
             b'i' if !from_view => {
                 if self.interactive_phase() {
-                    self.console.show(&Show::Note(if crate::locale::german() {
-                        format!(
-                            "Nachricht an {} (Enter senden, Esc abbrechen):",
-                            self.name(self.machine.next)
+                    self.console.show(&Show::Note(
+                        tr!(
+                            "Message to both (Enter sends, Esc cancels):",
+                            "Nachricht an beide (Enter senden, Esc abbrechen):"
                         )
-                    } else {
-                        format!(
-                            "Message to {} (Enter sends, Esc cancels):",
-                            self.name(self.machine.next)
-                        )
-                    }));
+                        .into(),
+                    ));
                     self.mode = Mode::Inject(LineInput::new());
                 } else {
                     self.console.show(&Show::Note(
@@ -679,9 +709,9 @@ impl Coordinator {
             self.log(tr!("Human", "Mensch"), None, &text);
             let next = self.name(self.machine.next);
             self.show_all(Show::Note(if crate::locale::german() {
-                format!("✉ Nachricht an {next} vorgemerkt: {text}")
+                format!("✉ Nachricht an beide vorgemerkt ({next} ist als Nächstes dran): {text}")
             } else {
-                format!("✉ Message to {next} queued: {text}")
+                format!("✉ Message to both queued ({next} speaks next): {text}")
             }));
         }
     }

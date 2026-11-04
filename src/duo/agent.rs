@@ -6,6 +6,13 @@
 //! - codex: `--ignore-user-config --ignore-rules`, Sandbox read-only; bei `exec resume` gibt
 //!   es kein `-s`, dort `-c sandbox_mode="read-only"`. Modell explizit per `-m`.
 //! - Der Prompt geht immer über stdin (Listen-Optionen würden ihn sonst verschlucken).
+//! - Gedächtnis schreibbar (Standard, `--no-memory-write` schaltet ab), sonst nichts:
+//!   claude bekommt `Edit`/`Write`, `--permission-mode dontAsk` und nur die Freigabe
+//!   `Edit(/<mem>/**)` (Pfadregeln greifen nur als `Edit(…)`, sie decken `Write` mit ab).
+//!   codex: `--add-dir` wirkt unter `read-only` nicht. Darum `workspace-write` mit dem
+//!   Gedächtnis als Arbeitsverzeichnis, `/tmp`, `$TMPDIR` und Netz ausgeschlossen. Bei
+//!   `exec resume` gilt das Verzeichnis, in dem der Prozess startet, deshalb startet codex
+//!   dann immer im Gedächtnis (`spawn_dir`). Geprüft mit claude 2.1.318, codex-cli 0.166.0.
 
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::process::CommandExt;
@@ -84,6 +91,8 @@ pub struct Agent {
     /// Gemeinsames Gedächtnis. claude bekommt es per `--add-dir` frei (sonst sperrt
     /// `--restricted` alles außerhalb von `cwd`); codex liest headless ohnehin überall.
     pub memory: Option<PathBuf>,
+    /// Gedächtnis schreibbar (nur wirksam mit `memory`, siehe `memory_writable`).
+    pub memory_write: bool,
 }
 
 impl Agent {
@@ -92,7 +101,26 @@ impl Agent {
             Kind::Claude => Some(uuid_v4()),
             Kind::Codex => None,
         };
-        Agent { kind, cwd, session, started: false, model, memory: None }
+        Agent { kind, cwd, session, started: false, model, memory: None, memory_write: false }
+    }
+
+    /// Das Gedächtnis, falls es beschreibbar sein soll. Pfade, die claude als Liste
+    /// zerlegen oder als Regel missverstehen würde, bleiben vorsichtshalber nur lesbar.
+    pub fn memory_writable(&self) -> Option<&Path> {
+        let m = self.memory.as_deref().filter(|_| self.memory_write)?;
+        let text = m.to_str()?;
+        let plain = m.is_absolute()
+            && !text.chars().any(|c| c.is_whitespace() || matches!(c, ',' | '(' | ')' | '*'));
+        plain.then_some(m)
+    }
+
+    /// Verzeichnis, in dem der headless Aufruf startet. codex mit schreibbarem Gedächtnis
+    /// startet dort, weil sein Schreibbereich das Startverzeichnis ist (auch bei `resume`).
+    pub fn spawn_dir(&self) -> &Path {
+        match (self.kind, self.memory_writable()) {
+            (Kind::Codex, Some(m)) => m,
+            _ => &self.cwd,
+        }
     }
 
     /// Argumente für den headless Aufruf (ohne Programmname).
@@ -118,25 +146,55 @@ impl Agent {
                     ]
                     .map(s),
                 );
-                // Vor `--tools`: Beide nehmen Listen, `--tools` muss als Letztes stehen.
-                if let Some(m) = &self.memory {
+                // Vor `--tools`: Alle nehmen Listen, `--tools` muss als Letztes stehen.
+                if let Some(m) = self.memory_writable() {
+                    a.extend([s("--permission-mode"), s("dontAsk")]);
                     a.extend([s("--add-dir"), m.display().to_string()]);
+                    a.extend([s("--allowedTools"), format!("Edit(/{}/**)", m.display())]);
+                    a.extend(["--tools", "Read", "Grep", "Glob", "Edit", "Write"].map(s));
+                } else {
+                    if let Some(m) = &self.memory {
+                        a.extend([s("--add-dir"), m.display().to_string()]);
+                    }
+                    a.extend(["--tools", "Read", "Grep", "Glob"].map(s));
                 }
-                a.extend(["--tools", "Read", "Grep", "Glob"].map(s));
                 a
             }
             Kind::Codex => {
+                let write = self.memory_writable().is_some();
+                let mode = if write { "workspace-write" } else { "read-only" };
+                // Nur das Startverzeichnis (= Gedächtnis) schreibbar, kein /tmp, kein Netz.
+                // Das Gedächtnis ist kein Git-Repo; ohne `--skip-git-repo-check` bricht codex
+                // dort ab. Der Schreibbereich bleibt davon unberührt.
+                let confine = || {
+                    let mut c: Vec<String> = [
+                        "sandbox_workspace_write.exclude_slash_tmp=true",
+                        "sandbox_workspace_write.exclude_tmpdir_env_var=true",
+                        "sandbox_workspace_write.network_access=false",
+                    ]
+                    .into_iter()
+                    .flat_map(|c| [s("-c"), s(c)])
+                    .collect();
+                    c.push(s("--skip-git-repo-check"));
+                    c
+                };
                 let mut a = vec![s("exec")];
                 match (&self.session, self.started) {
                     (Some(id), true) => {
                         a.extend([s("resume"), s("--json")]);
-                        a.extend([s("-c"), s("sandbox_mode=\"read-only\"")]);
+                        a.extend([s("-c"), format!("sandbox_mode=\"{mode}\"")]);
+                        if write {
+                            a.extend(confine());
+                        }
                         a.extend(common_codex(&self.model, out_file));
                         a.extend([id.clone(), s("-")]);
                     }
                     _ => {
-                        a.extend([s("--json"), s("-s"), s("read-only")]);
-                        a.extend([s("-C"), self.cwd.display().to_string()]);
+                        a.extend([s("--json"), s("-s"), s(mode)]);
+                        a.extend([s("-C"), self.spawn_dir().display().to_string()]);
+                        if write {
+                            a.extend(confine());
+                        }
                         a.extend(common_codex(&self.model, out_file));
                         a.push(s("-"));
                     }
@@ -375,7 +433,7 @@ pub fn start_turn(
     let args = agent.headless_args(&out_file);
     let mut cmd = Command::new(agent.kind.name());
     cmd.args(&args)
-        .current_dir(&agent.cwd)
+        .current_dir(agent.spawn_dir())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -610,6 +668,33 @@ mod tests {
     }
 
     #[test]
+    fn claude_may_write_only_memory() {
+        let mut a = Agent::new(Kind::Claude, "/w".into(), None);
+        a.memory = Some("/m".into());
+        a.memory_write = true;
+        let joined = a.headless_args(Path::new("/x")).join(" ");
+        assert!(joined.contains("--restricted") && joined.contains("--strict-mcp-config"));
+        assert!(
+            joined.ends_with(
+                "--permission-mode dontAsk --add-dir /m --allowedTools Edit(//m/**) --tools Read Grep Glob Edit Write"
+            ),
+            "{joined}"
+        );
+        assert!(!joined.contains("dangerously") && !joined.contains("bypass"));
+        assert_eq!(a.spawn_dir(), Path::new("/w"));
+
+        // Ohne Gedächtnis gibt es auch kein Schreiben.
+        a.memory = None;
+        assert!(a.headless_args(Path::new("/x")).join(" ").ends_with("--tools Read Grep Glob"));
+        // Pfade, die als Liste oder Regel missverstanden würden: nur lesen.
+        for odd in ["/a b", "/a,b", "/a(b)", "rel"] {
+            a.memory = Some(odd.into());
+            assert!(a.memory_writable().is_none(), "{odd}");
+            assert!(a.headless_args(Path::new("/x")).join(" ").ends_with("--tools Read Grep Glob"));
+        }
+    }
+
+    #[test]
     fn codex_args_first_and_resume() {
         let mut a = Agent::new(Kind::Codex, "/w".into(), Some("m1".into()));
         let first = a.headless_args(Path::new("/o")).join(" ");
@@ -629,6 +714,41 @@ mod tests {
             a.interactive_command().unwrap(),
             vec!["codex", "--no-alt-screen", "resume", "T1"]
         );
+        assert_eq!(a.spawn_dir(), Path::new("/w"));
+    }
+
+    #[test]
+    fn codex_writes_only_memory_and_always_starts_there() {
+        let confine = "-c sandbox_workspace_write.exclude_slash_tmp=true \
+                       -c sandbox_workspace_write.exclude_tmpdir_env_var=true \
+                       -c sandbox_workspace_write.network_access=false \
+                       --skip-git-repo-check";
+        let mut a = Agent::new(Kind::Codex, "/w".into(), Some("m1".into()));
+        a.memory = Some("/m".into());
+        a.memory_write = true;
+        assert_eq!(a.spawn_dir(), Path::new("/m"));
+        let first = a.headless_args(Path::new("/o")).join(" ");
+        assert_eq!(
+            first,
+            format!(
+                "exec --json -s workspace-write -C /m {confine} --ignore-user-config --ignore-rules -o /o -m m1 -"
+            )
+        );
+        a.session = Some("T1".into());
+        a.started = true;
+        // Fortsetzen: Schreibbereich ist das Startverzeichnis, das bleibt das Gedächtnis.
+        assert_eq!(a.spawn_dir(), Path::new("/m"));
+        let resume = a.headless_args(Path::new("/o")).join(" ");
+        assert_eq!(
+            resume,
+            format!(
+                "exec resume --json -c sandbox_mode=\"workspace-write\" {confine} --ignore-user-config --ignore-rules -o /o -m m1 T1 -"
+            )
+        );
+        // Abgeschaltet: wieder read-only im Projekt.
+        a.memory_write = false;
+        assert_eq!(a.spawn_dir(), Path::new("/w"));
+        assert!(a.headless_args(Path::new("/o")).join(" ").contains("sandbox_mode=\"read-only\""));
     }
 
     #[test]

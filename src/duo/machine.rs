@@ -6,6 +6,7 @@
 //! - Pause lässt einen laufenden Aufruf zu Ende laufen, gibt aber erst nach „weiter“ weiter.
 //! - Nachrichten werden nie ersetzt oder verworfen: Jede Seite hat einen Posteingang,
 //!   beim nächsten Aufruf gehen alle offenen Nachrichten in Reihenfolge hinein.
+//! - Was der Mensch schreibt (Startfrage, Einwürfe), geht an beide Seiten.
 //! - Antwortet ein Aufruf, der nicht läuft, ist das ein Fehler.
 
 use serde::{Deserialize, Serialize};
@@ -112,7 +113,7 @@ impl Machine {
             in_flight: Vec::new(),
             next_seq: 1,
         };
-        m.post(Side::A, From::Human, first_prompt);
+        m.post_human(first_prompt);
         let effects = m.advance();
         (m, effects)
     }
@@ -121,6 +122,15 @@ impl Machine {
         let seq = self.next_seq;
         self.next_seq += 1;
         self.inbox[to.idx()].push(Message { seq, from, text });
+    }
+
+    /// Nachricht des Menschen in beide Posteingänge (gleiche `seq`).
+    fn post_human(&mut self, text: String) {
+        let seq = self.next_seq;
+        self.next_seq += 1;
+        for side in [Side::A, Side::B] {
+            self.inbox[side.idx()].push(Message { seq, from: From::Human, text: text.clone() });
+        }
     }
 
     #[cfg(test)]
@@ -203,13 +213,13 @@ impl Machine {
         self.pause_requested
     }
 
-    /// Nachricht des Menschen an die Seite, die als nächste dran ist (nur in einer Pause).
+    /// Nachricht des Menschen an beide Seiten (nur in einer Pause). Die Seite, die als
+    /// nächste dran ist, bekommt sie sofort, die andere bei ihrem nächsten Aufruf.
     pub fn inject(&mut self, text: String) -> bool {
         if !self.can_interact() {
             return false;
         }
-        let next = self.next;
-        self.post(next, From::Human, text);
+        self.post_human(text);
         true
     }
 
@@ -294,7 +304,9 @@ mod tests {
 
         let (side, seq, msgs) = run_of(&m.turn_done(side, seq, "a1".into()));
         assert_eq!(side, Side::B);
-        assert_eq!(msgs[0].from, From::Side(Side::A));
+        // B bekommt die Startfrage des Menschen und danach die Antwort von A.
+        assert_eq!((msgs[0].from.clone(), msgs[0].text.as_str()), (From::Human, "Start"));
+        assert_eq!(msgs[1].from, From::Side(Side::A));
         let (side, seq, _) = run_of(&m.turn_done(side, seq, "b1".into()));
         assert_eq!(side, Side::A);
         assert!(m.turn_done(side, seq, "a2".into()).is_empty());
@@ -315,9 +327,9 @@ mod tests {
         assert!(m.pause_requested());
         assert!(m.turn_done(side, seq, "a1".into()).is_empty());
         assert_eq!(m.phase, Phase::Paused);
-        assert_eq!(m.pending(Side::B)[0].text, "a1");
+        assert_eq!(m.pending(Side::B)[1].text, "a1");
         let (side, _, msgs) = run_of(&m.toggle_pause());
-        assert_eq!((side, msgs.len()), (Side::B, 1));
+        assert_eq!((side, msgs.len()), (Side::B, 2));
     }
 
     #[test]
@@ -329,7 +341,38 @@ mod tests {
         assert!(m.inject("Bitte kürzer".into()));
         let (_, _, msgs) = run_of(&m.toggle_pause());
         let texts: Vec<_> = msgs.iter().map(|m| (m.from.clone(), m.text.as_str())).collect();
-        assert_eq!(texts, vec![(From::Side(Side::A), "a1"), (From::Human, "Bitte kürzer")]);
+        assert_eq!(
+            texts,
+            vec![
+                (From::Human, "Start"),
+                (From::Side(Side::A), "a1"),
+                (From::Human, "Bitte kürzer")
+            ]
+        );
+    }
+
+    #[test]
+    fn injected_message_reaches_both_sides_in_order() {
+        let (mut m, e) = Machine::new(6, "Start".into());
+        let (side, seq, _) = run_of(&e);
+        m.toggle_pause();
+        m.turn_done(side, seq, "a1".into());
+        assert!(m.inject("nur ohne Geburtsdaten".into()));
+
+        // B ist dran: a1, dann der Einwurf.
+        let (side, seq, msgs) = run_of(&m.toggle_pause());
+        assert_eq!(side, Side::B);
+        let texts: Vec<_> = msgs.iter().map(|m| m.text.as_str()).collect();
+        assert_eq!(texts, vec!["Start", "a1", "nur ohne Geburtsdaten"]);
+
+        // A bekommt den Einwurf ebenfalls, vor der Antwort von B.
+        let (side, _, msgs) = run_of(&m.turn_done(side, seq, "b1".into()));
+        assert_eq!(side, Side::A);
+        let texts: Vec<_> = msgs.iter().map(|m| (m.from.clone(), m.text.as_str())).collect();
+        assert_eq!(
+            texts,
+            vec![(From::Human, "nur ohne Geburtsdaten"), (From::Side(Side::B), "b1")]
+        );
     }
 
     #[test]
@@ -374,7 +417,8 @@ mod tests {
         let (side, _, msgs) = run_of(&m.takeover_ended(AfterTakeover::Continue));
         assert_eq!(side, Side::B);
         assert_eq!(msgs[0].from, From::Duo);
-        assert_eq!(msgs[1].text, "a1");
+        let texts: Vec<_> = msgs[1..].iter().map(|m| m.text.as_str()).collect();
+        assert_eq!(texts, vec!["Start", "a1"]);
     }
 
     #[test]
@@ -386,10 +430,10 @@ mod tests {
         m.take_over(Side::A);
         let (side, seq, msgs) = run_of(&m.takeover_ended(AfterTakeover::Continue));
         assert_eq!((side, msgs.len()), (Side::A, 1));
-        // Danach hat B zwei Nachrichten von A: a1 und die Übergabe, beide in Reihenfolge.
+        // Danach hat B die Startfrage und zwei Nachrichten von A: a1 und die Übergabe.
         let (side, _, msgs) = run_of(&m.turn_done(side, seq, "übergabe".into()));
         let texts: Vec<_> = msgs.iter().map(|m| m.text.as_str()).collect();
-        assert_eq!((side, texts), (Side::B, vec!["a1", "übergabe"]));
+        assert_eq!((side, texts), (Side::B, vec!["Start", "a1", "übergabe"]));
     }
 
     #[test]

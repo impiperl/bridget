@@ -140,6 +140,9 @@ enum Cmd {
         /// Do not pass the shared memory (~/.local/share/bridget/memory) to either side
         #[arg(long)]
         no_memory: bool,
+        /// Keep the shared memory read-only (by default both sides may write there, nowhere else)
+        #[arg(long)]
+        no_memory_write: bool,
         /// Initial prompt for side A
         prompt: Vec<String>,
     },
@@ -262,6 +265,7 @@ fn run(cli: Cli) -> anyhow::Result<i32> {
             timeout,
             transcript,
             no_memory,
+            no_memory_write,
             prompt,
         }) => {
             anyhow::ensure!(
@@ -289,6 +293,7 @@ fn run(cli: Cli) -> anyhow::Result<i32> {
                 timeout: std::time::Duration::from_secs(timeout),
                 transcript,
                 memory: if no_memory { None } else { memory::dir() },
+                memory_write: !no_memory_write,
                 prompt: prompt.join(" "),
             });
         }

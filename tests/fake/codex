@@ -1,6 +1,7 @@
 #!/bin/sh
 # Nachgebautes `codex exec --json -o FILE` für die duo-Tests.
 echo "codex $*" >> "$FAKE_LOG"
+pwd >> "$FAKE_LOG.cwd"
 prompt=$(cat)
 out=""
 prev=""

@@ -21,7 +21,8 @@ pub fn dir() -> Option<PathBuf> {
 }
 
 /// Einleitungsteil: wo das Gedächtnis liegt, dazu `INDEX.md` und alle `regeln/*.md`.
-pub fn preface(dir: &Path) -> String {
+/// `writable`: ob die Seite dort schreiben darf (duo, Standard).
+pub fn preface(dir: &Path, writable: bool) -> String {
     let mut files = vec![dir.join("INDEX.md")];
     let mut rules: Vec<PathBuf> = std::fs::read_dir(dir.join("regeln"))
         .into_iter()
@@ -34,15 +35,23 @@ pub fn preface(dir: &Path) -> String {
     files.extend(rules);
 
     let d = dir.display();
-    let mut out = if crate::locale::german() {
+    let de = crate::locale::german();
+    let mut out = if de {
         format!(
-            "Gemeinsames Gedächtnis (bridget) unter {d}. Die Regeln darin gelten für dich. Index und Regeln stehen unten; offene Übergaben in {d}/uebergaben/ und Einträge in {d}/wissen/ liest du bei Bedarf selbst. Hier schreibst du nichts hinein; was festgehalten werden soll, schlägst du dem Menschen vor (Format: {d}/GLOSSAR.md)."
+            "Gemeinsames Gedächtnis (bridget) unter {d}. Die Regeln darin gelten für dich. Index und Regeln stehen unten; offene Übergaben in {d}/uebergaben/ und Einträge in {d}/wissen/ liest du bei Bedarf selbst."
         )
     } else {
         format!(
-            "Shared memory (bridget) at {d}. Its rules apply to you. Index and rules follow below; read open handoffs in {d}/uebergaben/ and entries in {d}/wissen/ yourself when needed. Do not write there; propose anything worth keeping to the human (format: {d}/GLOSSAR.md)."
+            "Shared memory (bridget) at {d}. Its rules apply to you. Index and rules follow below; read open handoffs in {d}/uebergaben/ and entries in {d}/wissen/ yourself when needed."
         )
     };
+    out.push(' ');
+    out.push_str(&match (writable, de) {
+        (false, true) => format!("Hier schreibst du nichts hinein; was festgehalten werden soll, schlägst du dem Menschen vor (Format: {d}/GLOSSAR.md)."),
+        (false, false) => format!("Do not write there; propose anything worth keeping to the human (format: {d}/GLOSSAR.md)."),
+        (true, true) => format!("Du darfst hier schreiben, nach {d}/GLOSSAR.md: Übergaben, wissen/, NOTIZEN.md und INDEX.md; regeln/ nur, wenn der Mensch es ausdrücklich sagt. Lies eine Datei direkt vor dem Ändern neu, andere Sitzungen schreiben parallel. Sag im Gespräch kurz, was du eingetragen hast, die andere Seite sieht es sonst nicht."),
+        (true, false) => format!("You may write there, following {d}/GLOSSAR.md: handoffs, wissen/, NOTIZEN.md and INDEX.md; regeln/ only when the human explicitly says so. Re-read a file right before changing it, other sessions write in parallel. Say briefly in the conversation what you recorded, the other side will not see it otherwise."),
+    });
     let mut used = 0;
     for f in files {
         let Ok(text) = std::fs::read_to_string(&f) else { continue };
@@ -75,7 +84,10 @@ mod tests {
         std::fs::write(tmp.join("regeln/b.md"), "regel b\n").unwrap();
         std::fs::write(tmp.join("regeln/a.md"), "regel a\n").unwrap();
         std::fs::write(tmp.join("regeln/x.txt"), "nicht\n").unwrap();
-        let p = preface(&tmp);
+        let p = preface(&tmp, false);
+        assert!(p.contains("propose") || p.contains("schlägst"), "{p}");
+        let w = preface(&tmp, true);
+        assert!(w.contains("regeln/ only") || w.contains("regeln/ nur"), "{w}");
         let (i, a, b) = (
             p.find("--- INDEX.md").unwrap(),
             p.find("regel a").unwrap(),
